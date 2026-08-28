@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from . import config, state
+from . import config, pressure, state
 
 BEGIN = "# >>> agentdash >>>"
 END = "# <<< agentdash <<<"
@@ -600,6 +600,11 @@ def doctor() -> int:
                      % (rk["session_id"][:8], rk.get("turns", 0), float(rk.get("cost_usd") or 0))))
     else:
         rows.append((OK, "ranker", "not started yet"))
+
+    mem = pressure.read()
+    deferred, why = pressure.should_defer(config.load_config(), mem)
+    rows.append((WARN if deferred else OK, "machine memory",
+                 why or pressure.describe(mem)))
 
     rows.append((OK, "sessions", "%d tracked, %d need action"
                  % (len(data["sessions"]),

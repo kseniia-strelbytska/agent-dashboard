@@ -20,7 +20,7 @@ import time
 import uuid
 from typing import Dict, List, Optional, Tuple
 
-from . import config, state
+from . import config, pressure, state
 
 SYSTEM_PROMPT = """You are the ranking engine of a live dashboard that watches \
 several concurrent Claude Code sessions for one developer.
@@ -328,6 +328,13 @@ def rank_once() -> bool:
         return True
     if not cfg.get("ranking_enabled", True):
         apply_heuristic()
+        return True
+
+    deferred, why = pressure.should_defer(cfg)
+    if deferred:
+        _log("deferring rank: %s" % why)
+        apply_heuristic()
+        state.update(lambda d: d["ranker"].update(budget_note=why) or True)
         return True
 
     allowed, why = budget_state(data["ranker"], cfg, time.time())
