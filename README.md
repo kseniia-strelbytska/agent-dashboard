@@ -198,8 +198,12 @@ agentdash report --status question \
   --context "Four sentences only the ranking agent sees."
 ```
 
-`--status` is one of `working`, `done`, `question`, `blocked`. Only `working`
-means nothing is needed from you. `--name` is two or three words naming the work
+`--status` is one of `working`, `done`, `question`, `blocked`, in three tiers.
+`working` needs nothing. `done` is quiet — it shows as finished and never starts
+the red timer. `question` and `blocked` mean you are genuinely being waited on,
+start the timer, and compete for the top of the dashboard. Finished work fills
+whatever room is left above the fold rather than competing for it, so a session
+that ended cleanly is never mistaken for one stuck on a missing credential. `--name` is two or three words naming the work
 (`pool-leak-502s`, not `crisp-otter`); without one the row falls back to the
 working directory, and before a session has reported at all it gets a memorable
 generated name so the row is never nameless. Summaries longer than three sentences (or

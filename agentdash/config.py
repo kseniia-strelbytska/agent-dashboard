@@ -6,7 +6,7 @@ so that uninstalling is a single `rm -rf` plus the config-file edits install.sh 
 import os
 from pathlib import Path
 
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 STATE_VERSION = 3
 
 

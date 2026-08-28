@@ -33,6 +33,11 @@ On every update you receive the current roster of sessions. Each carries:
 
 Order the sessions by how much they need the developer's attention RIGHT NOW.
 
+A session that has finished and is waiting to be looked at is NOT the same as
+one that is blocked on an answer. Finished work should sit below anything
+genuinely stuck, however long it has been sitting, unless nothing is stuck at
+all.
+
 Judge on: is a human decision actually blocking progress; how expensive is the
 delay (a stalled deploy or a broken build beats a finished refactor awaiting
 review); how long it has already waited; whether the session can make progress
@@ -67,17 +72,20 @@ def heuristic_order(sessions: List[Dict]) -> List[Tuple[str, int, str]]:
 
     def key(rec):
         blocked_for = now - (rec.get("blocked_since") or now)
+        finished_for = now - (rec.get("finished_since") or now)
+        # Waiting on a human beats finished, finished beats still working.
+        tier = 0 if rec.get("action_needed") else (1 if rec.get("finished_since") else 2)
         return (
-            0 if rec.get("action_needed") else 1,
+            tier,
             0 if rec.get("status") == "question" else 1,
-            -blocked_for,
+            -blocked_for if tier == 0 else -finished_for,
         )
 
     out = []
     for i, rec in enumerate(sorted(sessions, key=key), start=1):
         if rec.get("action_needed"):
             reason = "waiting on you"
-        elif rec.get("status") == "done":
+        elif rec.get("finished_since"):
             reason = "finished, needs a glance"
         else:
             reason = "working"
@@ -110,6 +118,9 @@ def build_payload(data: Dict) -> Tuple[str, List[Dict]]:
         lines.append("  status: %s" % (rec.get("status") or "working"))
         lines.append("  action_needed: %s" % ("yes" if rec.get("action_needed") else "no"))
         lines.append("  waiting_on_user_for: %s" % waited)
+        if rec.get("finished_since"):
+            lines.append("  finished_and_unreviewed_for: %s"
+                         % _fmt_duration(now - rec["finished_since"]))
         lines.append("  working_dir: %s" % (rec.get("repo") or rec.get("cwd") or "unknown"))
         lines.append("  VISIBLE: %s" % (rec.get("summary") or "(no summary reported yet)"))
         lines.append("  PRIVATE: %s" % (rec.get("ranker_context") or "(none supplied)"))
