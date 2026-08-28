@@ -61,9 +61,9 @@ def _base_fields(payload: Dict) -> Dict:
     fields = {
         "cwd": cwd,
         "repo": report.repo_label(cwd),
-        "window_id": window_id,
-        "color": colour,
-        "iterm_session": iterm_uuid,
+        # binding is applied separately, under the "one session, one window"
+        # rule in state.apply_binding
+        "_binding": (iterm_uuid, window_id, colour),
     }
     if os.environ.get("CLAUDE_PID"):
         try:
@@ -92,7 +92,9 @@ def _set(session_id: str, fields: Dict, action: Optional[bool], status: Optional
                 rec["name"] = names.unique(derived, others)
                 rec["name_generated"] = False
         before = json.dumps(rec, sort_keys=True)
+        binding = fields.pop("_binding", (None, None, None))
         rec.update({k: v for k, v in fields.items() if v is not None})
+        state.apply_binding(data, rec, *binding)
         rec["last_seen"] = now
         if status is not None:
             rec["status"] = status
@@ -103,8 +105,6 @@ def _set(session_id: str, fields: Dict, action: Optional[bool], status: Optional
                     rec["blocked_since"] = now
             else:
                 rec["blocked_since"] = None
-        if rec.get("window_id") and rec["window_id"] in data["windows"]:
-            rec["color"] = data["windows"][rec["window_id"]]["color"]
         rec_now = dict(rec)
         rec_now["last_seen"] = 0
         prev = json.loads(before)

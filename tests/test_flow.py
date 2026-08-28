@@ -133,6 +133,28 @@ def main():
     run_hook("session-end", {"session_id": "sess-2", "cwd": "/tmp/other"})
     check("sess-2" not in state.read()["sessions"], "SessionEnd removes the row")
 
+    print("one session, one window")
+    os.environ["ITERM_SESSION_ID"] = "w0t0p0:uuid-a1"
+    report.submit("sess-bound", "working", "tests", "A. B. C.", "a. B. C. D.")
+    own = state.read()["sessions"]["sess-bound"]
+    check(own["color"] == c1, "a session binds to the window it reported from")
+
+    # someone runs `agentdash report --session-id sess-bound` from another window
+    os.environ["ITERM_SESSION_ID"] = "w0t0p0:uuid-b1"
+    report.submit("sess-bound", "working", "tests", "X. Y. Z.", "a. B. C. D.")
+    after = state.read()["sessions"]["sess-bound"]
+    check(after["color"] == c1,
+          "a report from a different window does not repaint the row (%s)" % after["color"])
+    check(after["summary"].startswith("X."), "but the content of that report still lands")
+
+    # once its own window closes, it is free to rebind
+    state.release_window("win-A")
+    report.submit("sess-bound", "working", "tests", "Q. R. S.", "a. B. C. D.")
+    rebound = state.read()["sessions"]["sess-bound"]
+    check(rebound["color"] == c2, "after its own window closes it rebinds (%s)" % rebound["color"])
+    state.remove_session("sess-bound")
+    os.environ["ITERM_SESSION_ID"] = "w0t0p0:uuid-a1"
+
     print("ranker isolation")
     run_hook("session-start", {"session_id": "ranker-sess", "cwd": "/tmp"},
              env={"AGENTDASH_INTERNAL": "1"})

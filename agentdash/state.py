@@ -204,6 +204,32 @@ def sync_windows(live: Dict[str, List[str]]) -> Dict[str, str]:
     return out
 
 
+def apply_binding(data: Dict, rec: Dict, iterm_session: Optional[str],
+                  window_id: Optional[str], colour: Optional[str]) -> None:
+    """Bind a session row to the terminal window it lives in.
+
+    A row's colour is only meaningful if it matches the window the session is
+    actually running in, and a Claude session never moves between windows. So
+    once bound, the binding is kept: a report arriving from somewhere else -
+    `agentdash report --session-id ...` typed in another terminal, or any tool
+    that shells out - must not repaint someone else's row. Rebinding happens
+    only when the session's own window has gone away.
+    """
+    stored = rec.get("iterm_session")
+    if stored and iterm_session and stored != iterm_session:
+        if window_for_iterm_session(data, stored):
+            return                      # its own window is still open; ignore
+    if iterm_session:
+        rec["iterm_session"] = iterm_session
+    if window_id:
+        rec["window_id"] = window_id
+    if colour:
+        rec["color"] = colour
+    wid = rec.get("window_id")
+    if wid and wid in data["windows"]:
+        rec["color"] = data["windows"][wid]["color"]
+
+
 def window_for_iterm_session(data: Dict, iterm_session: str) -> Optional[str]:
     for wid, entry in data.get("windows", {}).items():
         if iterm_session in entry.get("iterm_sessions", []):
