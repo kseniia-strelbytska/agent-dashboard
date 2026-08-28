@@ -12,9 +12,28 @@
 
 set -u
 event="${1:-}"
-STATE_DIR="${AGENTDASH_CONTAINER_HOME:-$HOME/.agentdash}"
+
+# `: > file` looks harmless but `:` is a POSIX *special builtin*, and a
+# redirection error on one of those terminates a non-interactive shell. Under
+# the container's sandbox $HOME is read-only, so that killed the reporter after
+# it had already written its record. touch is a regular utility: it just fails.
+mark() { touch "$1" 2>/dev/null || return 0; }
+
+# Fall back to somewhere writable if the sandbox has made $HOME read-only, so
+# the bookkeeping markers survive and the hooks stop re-injecting instructions.
+pick_state_dir() {
+  for d in "${AGENTDASH_CONTAINER_HOME:-}" "$HOME/.agentdash" \
+           "${TMPDIR:-/tmp}/agentdash" /tmp/agentdash; do
+    [ -n "$d" ] || continue
+    if mkdir -p "$d/sessions" 2>/dev/null && [ -w "$d/sessions" ]; then
+      printf '%s' "$d"; return 0
+    fi
+  done
+  printf '%s' "${TMPDIR:-/tmp}/agentdash"
+}
+
+STATE_DIR="$(pick_state_dir)"
 SESSIONS="$STATE_DIR/sessions"
-mkdir -p "$SESSIONS" 2>/dev/null || true
 
 payload=$(cat 2>/dev/null | tr -d '\n\r')
 field() {
@@ -64,7 +83,7 @@ case "$event" in
     fi
     ;;
   stop|notification)
-    : > "$SESSIONS/$sid.stopped" 2>/dev/null || true
+    mark "$SESSIONS/$sid.stopped"
     spool
     ;;
   session-end)

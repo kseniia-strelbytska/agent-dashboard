@@ -202,22 +202,90 @@ def remove(container: str) -> bool:
 
 # --- ingestion --------------------------------------------------------------------
 
-def spool_roots() -> List[Tuple[str, str, List[Dict[str, str]]]]:
-    """(container, host spool dir, mounts) for every place records may land."""
+# A session's working directory can be any depth under the mount - a git
+# worktree two levels down, for instance - and the reporter falls back to
+# $PWD/.agentdash-spool, so discovery has to walk rather than guess.
+MAX_SPOOL_DEPTH = 3
+SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".next",
+             "target", "build", "dist", ".tox", ".mypy_cache", "Library"}
+# Walking the whole shared tree costs the better part of a second, so it is a
+# backstop on a slow cadence. The common case is covered for free: every
+# container session's own working directory is already known from its row, and
+# that is exactly where the reporter falls back to.
+_DISCOVERY_INTERVAL = 300.0
+_discovered: Dict[str, float] = {}
+_last_walk = [0.0]
+
+
+def find_spools(root: str, max_depth: int = MAX_SPOOL_DEPTH) -> List[str]:
+    """Every .agentdash-spool directory under `root`, to a bounded depth."""
+    found = []
+    root = root.rstrip("/")
+    base_depth = root.count(os.sep)
+    for dirpath, dirnames, _ in os.walk(root):
+        if dirpath.count(os.sep) - base_depth >= max_depth:
+            dirnames[:] = []
+            continue
+        if SPOOL_DIRNAME in dirnames:
+            found.append(os.path.join(dirpath, SPOOL_DIRNAME))
+        dirnames[:] = [d for d in dirnames
+                       if d not in SKIP_DIRS and not (d.startswith(".") and d != SPOOL_DIRNAME)]
+    return found
+
+
+def spool_roots(force: bool = False) -> List[Tuple[str, str, List[Dict[str, str]]]]:
+    """(container, host spool dir, mounts) for every place records may land.
+
+    The full walk is throttled; directories found once are remembered and
+    checked on every pass, so a new record in a known spool is picked up
+    immediately while a brand new spool location costs one walk per half minute.
+    """
+    now = time.time()
+    registry = load()
+    walk = force or (now - _last_walk[0] > _DISCOVERY_INTERVAL)
+    if walk:
+        _last_walk[0] = now
+        _discovered.clear()
+        for container, record in registry.items():
+            for m in record.get("mounts") or []:
+                for path in find_spools(m["source"]):
+                    _discovered[path] = now
+
+    # Free candidates: the mount roots, and the working directory of every
+    # container session we already know about.
+    known_cwds = []
+    try:
+        for rec in state.read()["sessions"].values():
+            cwd = rec.get("cwd")
+            if cwd and rec.get("container"):
+                known_cwds.append((rec["container"], cwd))
+    except Exception:
+        pass
+
     out = []
-    for container, record in load().items():
+    seen = set()
+    for container, record in registry.items():
         binds = record.get("mounts") or []
-        for m in binds:
-            src = m["source"]
-            out.append((container, os.path.join(src, SPOOL_DIRNAME), binds))
-            try:
-                for entry in sorted(os.listdir(src)):
-                    nested = os.path.join(src, entry, SPOOL_DIRNAME)
-                    if os.path.isdir(nested):
-                        out.append((container, nested, binds))
-            except OSError:
-                pass
+        candidates = [os.path.join(m["source"], SPOOL_DIRNAME) for m in binds]
+        candidates += [os.path.join(cwd, SPOOL_DIRNAME)
+                       for name, cwd in known_cwds if name == container]
+        for path in list(_discovered):
+            if any(path.startswith(m["source"].rstrip("/") + os.sep) or
+                   path == os.path.join(m["source"], SPOOL_DIRNAME) for m in binds):
+                candidates.append(path)
+        for path in candidates:
+            key = (container, path)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((container, path, binds))
     return out
+
+
+def forget_discovery() -> None:
+    """Drop the discovery cache so the next call walks again."""
+    _discovered.clear()
+    _last_walk[0] = 0.0
 
 
 def to_host_path(path: str, binds: List[Dict[str, str]]) -> str:
@@ -306,11 +374,58 @@ def _read_records(path: str) -> List[Tuple[str, Dict]]:
     return out
 
 
+def hide_from_git(spool: str) -> None:
+    """Keep the fallback spool out of the user's working tree.
+
+    The sandbox can force the spool inside a repo, and nobody wants stray files
+    in `git status`. This uses .git/info/exclude rather than .gitignore: it is
+    local, never committed, and not ours to put in someone's tracked file.
+    """
+    directory = os.path.dirname(spool.rstrip("/"))
+    for _ in range(6):
+        git = os.path.join(directory, ".git")
+        if os.path.exists(git):
+            break
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            return
+        directory = parent
+    else:
+        return
+    if os.path.isfile(git):              # a worktree: .git is a file pointing elsewhere
+        try:
+            with open(git) as fh:
+                line = fh.read().strip()
+            if line.startswith("gitdir:"):
+                git = line.split(":", 1)[1].strip()
+        except OSError:
+            return
+    exclude = os.path.join(git, "info", "exclude")
+    entry = SPOOL_DIRNAME + "/"
+    try:
+        os.makedirs(os.path.dirname(exclude), exist_ok=True)
+        existing = ""
+        if os.path.exists(exclude):
+            with open(exclude) as fh:
+                existing = fh.read()
+        if entry in existing.split():
+            return
+        with open(exclude, "a") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            fh.write("%s\n" % entry)
+    except OSError:
+        pass
+
+
 def ingest() -> int:
     """Apply every spooled record and delete it. Returns how many were applied."""
     applied = 0
     for container, spool, binds in spool_roots():
-        for path, rec in _read_records(spool):
+        records = _read_records(spool)
+        if records:
+            hide_from_git(spool)
+        for path, rec in records:
             try:
                 if _apply(container, rec, binds):
                     applied += 1

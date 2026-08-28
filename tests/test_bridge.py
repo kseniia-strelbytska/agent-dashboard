@@ -105,9 +105,77 @@ def main():
         json.dump({"v": 1, "kind": "report", "session_id": "c0ffee-3",
                    "status": "working", "name": "fallback spool", "tag": "tests",
                    "cwd": "/work/math-open-problem-solving", "at": time.time()}, fh)
+    bridge.forget_discovery()
     check(bridge.ingest() == 1, "a record spooled inside the project is picked up")
     check("fallback-spool" in {r["name"] for r in state.read()["sessions"].values()},
           "and becomes a row")
+
+    print("a spool several levels down is still found")
+    # A git worktree two levels under the mount is where this actually broke:
+    # the reporter falls back to $PWD/.agentdash-spool, and $PWD can be deep.
+    deep = os.path.join(project, "zarankiewicz-3-3", ".agentdash-spool")
+    os.makedirs(deep, exist_ok=True)
+    with open(os.path.join(deep, "1.json"), "w") as fh:
+        json.dump({"v": 1, "kind": "report", "session_id": "deep-1",
+                   "status": "working", "name": "deep worktree", "tag": "data",
+                   "cwd": "/work/math-open-problem-solving/zarankiewicz-3-3",
+                   "at": time.time()}, fh)
+    found = [d for _, d, _ in bridge.spool_roots(force=True)]
+    check(deep in found, "the nested spool is discovered (%d dirs)" % len(found))
+    check(bridge.ingest() == 1, "and its record is ingested")
+    check(any(deep == d for _, d, _ in bridge.spool_roots()),
+          "a known session's own directory is scanned without another walk")
+    check("deep-worktree" in {r["name"] for r in state.read()["sessions"].values()},
+          "and becomes a row")
+
+    print("discovery skips the places that would make it slow")
+    junk = os.path.join(project, "node_modules", "pkg", ".agentdash-spool")
+    os.makedirs(junk, exist_ok=True)
+    check(junk not in bridge.find_spools(share),
+          "node_modules is not walked")
+    hidden = os.path.join(project, ".git", "x", ".agentdash-spool")
+    os.makedirs(hidden, exist_ok=True)
+    check(hidden not in bridge.find_spools(share), ".git is not walked")
+
+    print("the spool is kept out of git status")
+    repo = os.path.join(share, "a-repo")
+    os.makedirs(os.path.join(repo, ".git", "info"), exist_ok=True)
+    rspool = os.path.join(repo, ".agentdash-spool")
+    os.makedirs(rspool, exist_ok=True)
+    with open(os.path.join(rspool, "1.json"), "w") as fh:
+        json.dump({"v": 1, "kind": "report", "session_id": "repo-1", "status": "working",
+                   "name": "in a repo", "cwd": "/work/a-repo", "at": time.time()}, fh)
+    bridge.forget_discovery()
+    bridge.ingest()
+    exclude = os.path.join(repo, ".git", "info", "exclude")
+    body = open(exclude).read() if os.path.exists(exclude) else ""
+    check(".agentdash-spool/" in body, "the spool is added to .git/info/exclude")
+    bridge.hide_from_git(rspool)
+    check(open(exclude).read().count(".agentdash-spool/") == 1,
+          "and only once, however many times it runs")
+    check(not os.path.exists(os.path.join(repo, ".gitignore")),
+          "the user's tracked .gitignore is left alone")
+
+    print("the reporter survives a read-only HOME")
+    # $HOME is read-only inside the container's sandbox. `: > file` there killed
+    # the script outright, because `:` is a POSIX special builtin and a
+    # redirection failure on one terminates a non-interactive shell.
+    ro = tempfile.mkdtemp(prefix="agentdash-ro-")
+    os.chmod(ro, 0o500)
+    spool2 = tempfile.mkdtemp(prefix="agentdash-spool2-")
+    try:
+        r = subprocess.run(["/bin/sh", os.path.join(ROOT, "container", "agentdash-report.sh"),
+                            "--status", "done", "--name", "read only home", "--tag", "tests",
+                            "--summary", "A. B. C.", "--context", "D. E. F. G.",
+                            "--cwd", "/work/math-open-problem-solving"],
+                           env=dict(os.environ, HOME=ro, AGENTDASH_SPOOL=spool2,
+                                    AGENTDASH_CONTAINER_HOME=os.path.join(ro, ".agentdash"),
+                                    CLAUDE_CODE_SESSION_ID="ro-1"),
+                           capture_output=True, text=True)
+        check(r.returncode == 0, "it exits cleanly (%s)" % (r.stderr.strip() or "ok"))
+        check(len(os.listdir(spool2)) == 1, "and the record is still written")
+    finally:
+        os.chmod(ro, 0o700)
 
     print("")
     if FAILURES:
