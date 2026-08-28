@@ -26,6 +26,7 @@ import tty
 import unicodedata
 from typing import Dict, List, Optional, Tuple
 
+from . import cat as cat_module
 from . import config, palette, pressure, ranker, state, usage
 
 ESC = "\x1b"
@@ -127,12 +128,19 @@ def fmt_duration(seconds: Optional[float], short: bool = False) -> str:
 # --- the frame ----------------------------------------------------------------
 
 class Line:
-    """One rendered line plus the session it belongs to (for hover hit-testing)."""
-    __slots__ = ("text", "session_id")
+    """One rendered line, the session it belongs to, and whether it is a gutter.
 
-    def __init__(self, text: str, session_id: Optional[str] = None):
+    Gutters are the blank lines between cards. They are the only place the cat
+    is allowed to be, which is what makes "never overlaps a card" structural
+    rather than a rule that has to be enforced.
+    """
+    __slots__ = ("text", "session_id", "gutter")
+
+    def __init__(self, text: str, session_id: Optional[str] = None,
+                 gutter: Optional[int] = None):
         self.text = text
         self.session_id = session_id
+        self.gutter = gutter
 
 
 class Dashboard:
@@ -145,7 +153,13 @@ class Dashboard:
         # revealing private context by accident is worse than a second keypress.
         self.open_id: Optional[str] = None
         self.index_map: Dict[int, str] = {}
-        self.mouse_enabled = False
+        self.cat = cat_module.Cat() if self.cfg.get("cat", True) else None
+        self.cat_rows: Tuple[int, int] = (-1, -1)
+        self._cat_ctx = None
+        self._started = time.time()
+        # Motion reporting exists for exactly one purpose now: petting the cat.
+        # It opens nothing, commits to nothing and changes nothing.
+        self.mouse_enabled = bool(self.cat)
         self.help_open = False
         self.rows, self.cols = 24, 80
         self.line_owner: Dict[int, str] = {}
@@ -242,6 +256,9 @@ class Dashboard:
             bits.append("%s tok" % usage.human(rk["tokens"]))
         if rk.get("cost_usd"):
             bits.append("$%.2f" % rk["cost_usd"])
+        if self.cat:
+            share = self.cat.cost_fraction(max(1.0, now - self._started)) * 100.0
+            bits.append("cat %.2f%%" % share)
         if rk.get("retired"):
             bits.append("%d refresh%s" % (rk["retired"], "" if rk["retired"] == 1 else "es"))
         left = " " + " · ".join(bits)
@@ -416,7 +433,9 @@ class Dashboard:
 
         if self.open_id == sid:
             self._private_block(rec, indent, body_width, skin, lines, sid)
-        lines.append(Line("", sid))
+        lines.append(Line("", sid, gutter=index - 1))
+        if self.cat:
+            lines.append(Line("", sid, gutter=index - 1))
 
     def _private_block(self, rec: Dict, indent: str, body_width: int, skin: Dict,
                        lines: List[Line], sid: str):
@@ -498,6 +517,7 @@ class Dashboard:
     # keeps as many as fit and drops the rest rather than wrapping or spilling.
     HINTS = (
         ("1-9", "open context", "context"),
+        ("pet", "the cat", "cat"),
         ("o", "jump to window", "jump"),
         ("q", "quit", "quit"),
         ("a", "all/fold", "all"),
@@ -535,7 +555,13 @@ class Dashboard:
             "",
             "  1 - 9      open or close that session's ranker-only context",
             "  o          bring the top session's iTerm2 window to the front",
-            "  m          mouse reporting: off by default so you can select text",
+            "  m          mouse reporting; turn it off to select text with the mouse",
+            "",
+            "  The cat lives in the gaps between cards, so it can never cover one.",
+            "  It sits beside a session shortly before that timer turns red, walks",
+            "  faster the more sessions are open, and gets sleepy late or after a",
+            "  long day. Hovering it sends hearts and does nothing else at all.",
+            "  Turn it off with {\"cat\": false} in ~/.agent-dashboard/config.json.",
             "  a          show every session in full / return to the fold",
             "  + / -      change how many rows stay expanded",
             "  r          force a rerank now (costs one model call)",
@@ -605,7 +631,34 @@ class Dashboard:
 
         lines.append(Line(""))
         self._footer(lines)
+        self._place_cat(lines, data, top, now)
         return lines
+
+    def _place_cat(self, lines: List[Line], data: Dict, top: List[Dict], now: float):
+        """Draw the cat into one gutter, if it has one and is allowed to move."""
+        self.cat_rows = (-1, -1)
+        if not self.cat:
+            return
+        gutters: Dict[int, List[int]] = {}
+        for i, line in enumerate(lines):
+            if line.gutter is not None:
+                gutters.setdefault(line.gutter, []).append(i)
+        usable = sorted(g for g, rows in gutters.items() if len(rows) >= 2)
+        if not usable:
+            return
+        mem = pressure.read()
+        self.cat.update(data, top, len(usable), self.cols,
+                        self.red_after, decision_open=bool(self.open_id),
+                        under_pressure=pressure.should_defer(self.cfg, mem)[0], now=now)
+        # Remembered so the cat can be animated on its own, without rebuilding
+        # the whole frame eight times a second.
+        self._cat_ctx = (data, top, usable, gutters)
+        chosen = usable[min(self.cat.gutter, len(usable) - 1)]
+        rows = gutters[chosen][:2]
+        cat_top, cat_bottom = self.cat.draw(self.cols)
+        lines[rows[0]] = Line(cat_top, lines[rows[0]].session_id, gutter=chosen)
+        lines[rows[1]] = Line(cat_bottom, lines[rows[1]].session_id, gutter=chosen)
+        self.cat_rows = (rows[0] + 1, rows[1] + 1)     # 1-based screen rows
 
     def paint(self, data: Dict):
         lines = self.compose(data)
@@ -624,12 +677,47 @@ class Dashboard:
                 buf.append(CSI + "K")
         self._write("".join(buf))
 
+    def tick_cat(self, now: float) -> None:
+        """Animate the cat without recomposing anything else.
+
+        Only the two rows it occupies are rewritten. This is what keeps eight
+        frames a second honest against the cost claim in the header.
+        """
+        if not self.cat or not self._cat_ctx or self.cat_rows[0] < 1:
+            return
+        data, top, usable, gutters = self._cat_ctx
+        mem = pressure.read()
+        changed = self.cat.update(
+            data, top, len(usable), self.cols, self.red_after,
+            decision_open=bool(self.open_id),
+            under_pressure=pressure.should_defer(self.cfg, mem)[0], now=now)
+        if not changed:
+            return
+        chosen = usable[min(self.cat.gutter, len(usable) - 1)]
+        rows = gutters[chosen][:2]
+        if len(rows) < 2:
+            return
+        self.cat_rows = (rows[0] + 1, rows[1] + 1)
+        cat_top, cat_bottom = self.cat.draw(self.cols)
+        buf = []
+        for screen_row, text in zip(self.cat_rows, (cat_top, cat_bottom)):
+            if screen_row > self.rows:
+                return
+            buf.append(CSI + "%d;1H" % screen_row + RESET + text + CSI + "K")
+        self._write("".join(buf))
+
     # -- input -----------------------------------------------------------------
 
     def _handle_mouse(self, button: int, col: int, row: int, pressed: str) -> bool:
         """Mouse reporting is off unless asked for, and even then only a
         deliberate click does anything. Motion is ignored outright."""
-        if button & 64 or button & 32:          # wheel, or motion
+        if button & 64:                          # wheel
+            return False
+        if button & 32:                          # motion: only ever pets the cat
+            if self.cat and self.cat_rows[0] <= row <= self.cat_rows[1]:
+                within = row - self.cat_rows[0]
+                if self.cat.covers(col - 1, within):
+                    return self.cat.pet()
             return False
         if pressed == "M" and (button & 3) == 0:
             owner = self.line_owner.get(row)
@@ -776,6 +864,7 @@ class Dashboard:
             tty.setraw(fd)
             self._enter()
             last_paint = 0.0
+            last_cat = 0.0
             while True:
                 data = self._load_state()
                 dirty = self._read_input(0.12)
@@ -789,6 +878,10 @@ class Dashboard:
                     self.last_rev = data.get("rev")
                     self.paint(data)
                     last_paint = now
+                    last_cat = now
+                elif self.cat and now - last_cat >= self.cat.interval:
+                    self.tick_cat(now)
+                    last_cat = now
         except KeyboardInterrupt:
             return 0
         finally:

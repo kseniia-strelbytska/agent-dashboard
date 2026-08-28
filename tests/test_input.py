@@ -75,8 +75,20 @@ def main():
     check(feed(dash, "\x1b[<0;12;9M") and jumped == ["sess-b"],
           "a deliberate click still jumps to that session's window")
     check(dash.open_id is None, "and a click does not open private context either")
-    check(Fake().mouse_enabled is False,
-          "mouse reporting is off by default, so text selection works")
+    # Motion reporting is on only because the cat exists, and the only thing
+    # motion can do is send hearts. It opens nothing.
+    check(Fake().mouse_enabled is True,
+          "motion reporting is on while the cat is enabled, for petting")
+    import agentdash.config as cfgmod
+    saved = dict(cfgmod.DEFAULTS)
+    cfgmod.DEFAULTS["cat"] = False
+    try:
+        catless = Fake()
+        check(catless.cat is None and catless.mouse_enabled is False,
+              "with the cat off, motion reporting is off and selection is free")
+    finally:
+        cfgmod.DEFAULTS.clear()
+        cfgmod.DEFAULTS.update(saved)
 
     print("numbers open and close context")
     dash = Fake()
@@ -115,12 +127,13 @@ def main():
     check(dash.show_all is False, "a folds it back")
     feed(dash, "?")
     check(dash.help_open is True, "? opens help")
+    was = dash.mouse_enabled
     feed(dash, "m")
-    check(dash.mouse_enabled is True and tui.MOUSE_ON in dash.written[-1],
-          "m turns mouse reporting on for click-to-jump")
+    check(dash.mouse_enabled is not was, "m toggles mouse reporting")
+    check((tui.MOUSE_OFF if was else tui.MOUSE_ON) in dash.written[-1],
+          "and emits the matching sequence")
     feed(dash, "m")
-    check(dash.mouse_enabled is False and tui.MOUSE_OFF in dash.written[-1],
-          "and off again")
+    check(dash.mouse_enabled is was, "and back again")
     dash.open_id = "x"
     feed(dash, "m")
     check(dash.open_id == "x", "toggling the mouse leaves an open row alone")

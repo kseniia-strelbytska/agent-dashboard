@@ -205,6 +205,47 @@ working directory, and before a session has reported at all it gets a memorable
 generated name so the row is never nameless. Summaries longer than three sentences (or
 contexts longer than four) are clipped, with a note on stderr.
 
+## The cat
+
+An orange cat lives in the gaps between the cards. It obeys three rules.
+
+**It yields.** It only ever occupies a gutter — the blank line between two cards
+— so it structurally cannot cover a summary, a tag or a waiting timer. It leaves
+the gutter of any session whose timer has already gone red, and it stops moving
+entirely while a decision is expanded. If something needs attention, the cat is
+somewhere else.
+
+**It costs nothing.** Eight frames a second at most, and only the two lines it
+occupies are redrawn — the rest of the frame is not rebuilt. It freezes
+completely when the machine is under memory pressure. Measured: 240 frames cost
+19 ms of CPU, about 0.06% of wall clock. The header carries the cat's own cost
+next to the ranker's, which is both a joke and the proof.
+
+**It turns off without an argument.** `{"cat": false}`. No dialogue, no
+confirmation, no guilt text.
+
+Beyond that it carries three things that are true but graceless to say in words:
+
+- it **sits beside a session shortly before that session's timer turns red** — a
+  soft early warning that costs nothing to ignore;
+- its **pace tracks how many sessions are open**, ambling at two and trotting at
+  six, so you read your own fragmentation in peripheral vision without a number
+  appearing anywhere;
+- it **gets sleepy** late at night, after a long day, or when work is being sent
+  back to sessions repeatedly.
+
+There is deliberately no fourth behaviour. Each one added makes the others
+harder to read.
+
+**Petting it is the only interaction in this tool with no consequence.** Every
+other key is a decision, an approval, a commitment. Hovering the cat sends
+hearts and changes nothing — not the ordering, not a session, not a byte of
+state. That contrast is the point, not the hearts.
+
+Mouse motion reporting is on only because the cat is; the single thing motion
+can do is pet it. `m` turns reporting off if you would rather select text with
+the mouse, and turning the cat off turns reporting off with it.
+
 ## Configuration
 
 Optional, at `~/.agent-dashboard/config.json`. Anything you leave out keeps its
@@ -220,7 +261,8 @@ default.
   "rank_min_interval_seconds": 20,  // floor between two model calls
   "rank_max_per_hour": 60,          // rolling ceiling; heuristic order beyond it
   "defer_under_memory_pressure": true,
-  "min_available_percent": 12       // pause ranking below this much free memory
+  "min_available_percent": 12,      // pause ranking below this much free memory
+  "cat": true                       // the cat
 }
 ```
 
@@ -232,6 +274,7 @@ sticks.
 | Key | Does |
 | --- | --- |
 | `1`-`9` | open or close that session's ranker-only context |
+| hover the cat | hearts, and nothing else |
 | `a` | show every session in full / return to the fold |
 | `+` `-` | change how many rows stay expanded |
 | `r` | force a rerank now (costs one model call) |
@@ -274,6 +317,7 @@ python3 tests/test_limits.py     # rank budget, worker herd control
 python3 tests/test_pressure.py   # standing down under memory pressure
 python3 tests/test_retrofit.py   # handing instructions to sessions that lack them
 python3 tests/test_usage.py      # token metering from real transcript files
+python3 tests/test_cat.py        # the cat's three rules, as rules
 python3 tests/test_bridge.py     # containerised sessions, offline (no docker needed)
 python3 tests/test_flow.py       # windows, colours, reports, hooks, reaping
 python3 tests/render_demo.py 100 # render a synthetic roster; --hover --all --stale --empty

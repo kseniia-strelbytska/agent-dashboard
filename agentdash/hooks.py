@@ -200,8 +200,16 @@ def user_prompt_submit() -> int:
     _log("user_prompt", sid)
     before = state.read()["sessions"].get(sid) or {}
     fields = _base_fields(payload)
-    fields["last_prompt_at"] = time.time()
+    now = time.time()
+    fields["last_prompt_at"] = now
     fields["prompts"] = (before.get("prompts") or 0) + 1
+    # Sending work back to a session that had called itself done is a
+    # reversal. The rate of those is the closest thing we have to a measure of
+    # rework, and the dashboard uses it as a tiredness signal.
+    if before.get("action_needed") and before.get("status") == "done":
+        recent = [t for t in (before.get("reopen_times") or []) if now - t < 6 * 3600]
+        recent.append(now)
+        fields["reopen_times"] = recent[-40:]
     _set(sid, fields, action=False, status="working")
 
     rec = state.read()["sessions"].get(sid) or {}
