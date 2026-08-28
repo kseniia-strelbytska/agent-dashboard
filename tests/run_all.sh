@@ -1,12 +1,27 @@
 #!/usr/bin/env bash
 # Every test here runs offline: no iTerm2, no Claude session, no network.
-set -e
+#
+# pipefail matters: without it a suite's non-zero exit is masked by the `tail`
+# it is piped into, and a red run reports itself as green.
+set -uo pipefail
 cd "$(dirname "$0")"
-echo "== layout =="; python3 test_layout.py
-echo "== input  =="; python3 test_input.py | tail -2
-echo "== flow   =="; python3 test_flow.py 2>/dev/null | tail -2
-echo "== limits =="; python3 test_limits.py | tail -2
-echo "== memory =="; python3 test_pressure.py | tail -2
-echo "== install=="; python3 test_install.py | tail -2
+
+failed=0
+run() {
+  printf '== %-9s ==\n' "$1"
+  if python3 "$2" | tail -"${3:-2}"; then :; else failed=1; fi
+}
+
+run layout   test_layout.py   1
+run input    test_input.py    2
+run flow     test_flow.py     2
+run limits   test_limits.py   2
+run memory   test_pressure.py 2
+run install  test_install.py  2
+
 echo
+if [ "$failed" -ne 0 ]; then
+  echo "SUITES FAILED"
+  exit 1
+fi
 echo "All suites passed."

@@ -16,7 +16,7 @@ import sys
 import time
 from typing import Dict, Optional
 
-from . import config, ranker, report, state
+from . import config, names, ranker, report, state
 
 
 def _internal() -> bool:
@@ -79,10 +79,18 @@ def _set(session_id: str, fields: Dict, action: Optional[bool], status: Optional
     def mutate(data):
         sessions = data["sessions"]
         rec = sessions.get(session_id)
+        others = [s["name"] for sid, s in sessions.items() if sid != session_id]
         if rec is None:
-            rec = state.new_session_record(
-                session_id, [s["name"] for s in sessions.values()])
+            rec = state.new_session_record(session_id, others)
             sessions[session_id] = rec
+        if rec.get("name_generated", names.looks_generated(rec.get("name", ""))):
+            # Before the session has reported, the directory is the best clue
+            # available about what it is doing. Upgrade in place, so rows that
+            # predate this ever having a name catch up on their next event.
+            derived = names.describe("", fields.get("cwd") or rec.get("cwd") or "", "")
+            if derived:
+                rec["name"] = names.unique(derived, others)
+                rec["name_generated"] = False
         before = json.dumps(rec, sort_keys=True)
         rec.update({k: v for k, v in fields.items() if v is not None})
         rec["last_seen"] = now

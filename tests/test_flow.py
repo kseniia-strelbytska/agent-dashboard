@@ -63,11 +63,12 @@ def main():
     check(rec["color"] == c1, "a session inherits the colour of its window")
     check(rec["action_needed"] is False, "status=working needs no action")
     check(rec["blocked_since"] is None, "status=working runs no timer")
-    check(bool(rec["name"]) and "-" in rec["name"], "session got a punchy two-part name")
+    check(bool(rec["name"]), "a session always has a name, even before it reports one")
 
     res = report.submit("sess-1", "question", "debugging",
                         "Q one. Q two. Q three. Q four. Q five.",
-                        "P one. P two. P three. P four. P five. P six.")
+                        "P one. P two. P three. P four. P five. P six.",
+                        name="chasing a pool leak")
     rec = res["session"]
     check(len(report.split_sentences(rec["summary"])) == 3, "summary clipped to 3 sentences")
     check(len(report.split_sentences(rec["ranker_context"])) == 4, "context clipped to 4 sentences")
@@ -79,6 +80,37 @@ def main():
     report.submit("sess-1", "blocked", "infra", "Still stuck. On it. Sorry.", "a. b. c. d.")
     check(state.read()["sessions"]["sess-1"]["blocked_since"] == started,
           "the clock keeps running across repeated reports")
+
+    print("names describe the work")
+    check(rec["name"] == "chasing-pool-leak",
+          "a session that names itself gets that name, minus filler (%s)" % rec["name"])
+    report.submit("sess-1", "working", "tests", "Moved on. To tests. Now.", "a. B. C. D.",
+                  name="ranker payload tests")
+    check(state.read()["sessions"]["sess-1"]["name"] == "ranker-payload-tests",
+          "the name follows the work when it changes")
+    run_hook("session-start", {"session_id": "sess-derived", "cwd": "/tmp/payments-api"})
+    check(state.read()["sessions"]["sess-derived"]["name"] == "payments-api",
+          "with no name reported, the directory is used")
+
+    def make_legacy(data):
+        rec = state.new_session_record("sess-legacy", [])
+        # a row written before name_generated existed: no flag at all
+        rec.pop("name_generated", None)
+        data["sessions"]["sess-legacy"] = rec
+        return True
+    state.update(make_legacy)
+    animal = state.read()["sessions"]["sess-legacy"]["name"]
+    run_hook("stop", {"session_id": "sess-legacy", "cwd": "/tmp/ops-terraform"})
+    upgraded = state.read()["sessions"]["sess-legacy"]["name"]
+    check(upgraded == "ops-terraform",
+          "a placeholder animal name is upgraded once a directory is known (%s -> %s)"
+          % (animal, upgraded))
+    report.submit("sess-legacy", "done", "infra", "A. B. C.", "a. B. C. D.", name="rds-credential")
+    run_hook("stop", {"session_id": "sess-legacy", "cwd": "/tmp/ops-terraform"})
+    check(state.read()["sessions"]["sess-legacy"]["name"] == "rds-credential",
+          "but a name the session chose is never overwritten")
+    state.remove_session("sess-derived")
+    state.remove_session("sess-legacy")
 
     print("hooks")
     run_hook("user-prompt", {"session_id": "sess-1", "cwd": "/tmp/repo"})
@@ -120,7 +152,9 @@ def main():
     prompt, sessions = ranker.build_payload(state.read())
     check("VISIBLE:" in prompt and "PRIVATE:" in prompt,
           "both the shown summary and the private context reach the ranker")
-    check("Still stuck." in prompt, "the visible summary is included verbatim")
+    current = state.read()["sessions"]["sess-1"]["summary"]
+    check(current and current in prompt,
+          "the visible summary reaching the ranker is the current one, verbatim")
 
     print("reaping")
     state.touch_session("ghost", pid=999999)

@@ -39,6 +39,7 @@ def cmd_report(args) -> int:
         summary=args.summary,
         ranker_context=args.context,
         cwd=args.cwd,
+        name=args.name,
     )
     rec = result["session"]
     if args.json:
@@ -230,6 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
     rep = sub.add_parser("report", help="post an update from inside a Claude session")
     rep.add_argument("--status", required=True,
                      help="one of: %s" % ", ".join(report.STATUSES))
+    rep.add_argument("--name", help="two or three words naming what this session is doing")
     rep.add_argument("--tag", help="type of work last done, e.g. tests, docs, debugging")
     rep.add_argument("--summary", help="exactly 3 sentences, shown to the user")
     rep.add_argument("--context", help="exactly 4 sentences, seen only by the ranking agent")

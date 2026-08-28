@@ -217,6 +217,9 @@ def new_session_record(session_id: str, taken_names) -> Dict:
     return {
         "id": session_id,
         "name": names.generate(session_id, taken_names),
+        # A generated animal name is a placeholder. Any real clue about the
+        # work replaces it; a name the session chose for itself never is.
+        "name_generated": True,
         "window_id": None,
         "color": None,
         "cwd": None,
