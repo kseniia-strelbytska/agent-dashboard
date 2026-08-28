@@ -19,6 +19,64 @@ from typing import Dict, Optional
 from . import config, names, ranker, report, state
 
 
+NUDGE = (
+    "Reminder from the agent dashboard: your row has gone quiet. Post an update "
+    "with `agentdash report` - three sentences for the user in --summary, four "
+    "for the ranking agent in --context, plus --name and --tag - and always "
+    "report before you ask the user anything and when you finish."
+)
+
+# How many prompts to leave between re-injections, so a session that is already
+# reporting properly never pays for this.
+REINJECT_AFTER = 3
+QUIET_AFTER = 6
+
+
+def instructions_text() -> str:
+    """The reporting instructions, as rendered by the installer."""
+    try:
+        return (config.HOME / "instructions.md").read_text().strip()
+    except OSError:
+        return ""
+
+
+def _emit_context(event: str, text: str) -> None:
+    """Hand extra context back to Claude Code for this turn.
+
+    This is what makes the tool work on sessions that never loaded the
+    instructions from CLAUDE.md - one resumed from an older transcript, or
+    running somewhere with its own configuration. The next prompt they submit
+    carries the instructions, with no restart and nothing for the user to do.
+    """
+    if not text:
+        return
+    sys.stdout.write(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": event,
+            "additionalContext": text,
+        }
+    }))
+
+
+def _injection_needed(rec: Dict) -> Optional[str]:
+    """'full', 'nudge' or None. Costs nothing for a well-behaved session."""
+    prompts = rec.get("prompts") or 0
+    injected = rec.get("injected_at_prompt")
+    since_injection = prompts - injected if injected is not None else 10 ** 6
+
+    # It has ended at least one turn without reporting: it does not know it
+    # should. This is the case worth spending tokens on.
+    if not rec.get("reports") and rec.get("self_reported") is False:
+        return "full" if since_injection >= REINJECT_AFTER else None
+
+    # It knows how, but has gone quiet.
+    if rec.get("reports"):
+        since_report = prompts - (rec.get("prompt_at_last_report") or 0)
+        if since_report >= QUIET_AFTER and since_injection >= QUIET_AFTER:
+            return "nudge"
+    return None
+
+
 def _internal() -> bool:
     """True inside the ranking agent's own session, which must not self-report."""
     return os.environ.get("AGENTDASH_INTERNAL") == "1"
@@ -138,9 +196,21 @@ def user_prompt_submit() -> int:
     if not sid:
         return 0
     _log("user_prompt", sid)
+    before = state.read()["sessions"].get(sid) or {}
     fields = _base_fields(payload)
     fields["last_prompt_at"] = time.time()
+    fields["prompts"] = (before.get("prompts") or 0) + 1
     _set(sid, fields, action=False, status="working")
+
+    rec = state.read()["sessions"].get(sid) or {}
+    need = _injection_needed(rec)
+    if need:
+        _log("inject", "%s %s" % (sid, need))
+        _emit_context("UserPromptSubmit",
+                      instructions_text() if need == "full" else NUDGE)
+        state.update(lambda d: d["sessions"].get(sid, {}).update(
+            injected_at_prompt=rec.get("prompts") or 0) or True)
+
     ranker.request_rank()
     ranker.spawn_worker()
     return 0

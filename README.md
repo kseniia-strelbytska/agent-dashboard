@@ -99,6 +99,16 @@ disappears at `SessionEnd`. The waiting time turns red past one hour.
 asks you anything and when it finishes work. If a session stops without
 reporting, its row says so rather than inventing a summary for it.
 
+**Retrofitting.** `CLAUDE.md` is only read when a session starts, so a session
+that was already running, resumed from an older transcript, or started with its
+own configuration never sees it — and shows up permanently as a `(no report)`
+row. The `UserPromptSubmit` hook fixes that: a session that has ended a turn
+without reporting is handed the full instructions as extra context on its very
+next prompt. No restart, nothing for you to do. A session that is already
+reporting properly is never given anything, so this costs nothing in the normal
+case; one that has gone quiet for a few prompts gets a two-line nudge rather
+than the whole block.
+
 **Resource budget.** Each rank spawns a `claude` process, which is not small, so
 the ranking agent runs under hard caps as well as the debounce: a floor between
 consecutive model calls, a rolling hourly ceiling, and a bound on how long one
@@ -211,6 +221,7 @@ python3 tests/test_layout.py     # width safety at 40-200 cols, hover stability
 python3 tests/test_input.py      # SGR mouse decoding, focus reporting, keys
 python3 tests/test_limits.py     # rank budget, worker herd control
 python3 tests/test_pressure.py   # standing down under memory pressure
+python3 tests/test_retrofit.py   # handing instructions to sessions that lack them
 python3 tests/test_flow.py       # windows, colours, reports, hooks, reaping
 python3 tests/render_demo.py 100 # render a synthetic roster; --hover --all --stale --empty
 ```

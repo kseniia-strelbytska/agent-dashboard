@@ -148,27 +148,29 @@ def _invoke(prompt: str, ranker: Dict, model: str) -> Tuple[Optional[Dict], Dict
         return None, {"error": "the `claude` CLI is not on PATH"}
 
     fresh = not ranker.get("session_id")
+    # --allowedTools is variadic, so anything following it is swallowed as a
+    # tool name. The roster therefore goes in on stdin rather than as a
+    # positional argument, which is immune to flag ordering and to ARG_MAX.
     cmd = [binary, "-p",
            "--model", model,
            "--autocompact", "auto",
            "--output-format", "json",
-           "--allowedTools", "",
-           "--setting-sources", ""]
+           "--setting-sources", "",
+           "--allowedTools", ""]
     if fresh:
         session_id = str(uuid.uuid4())
         cmd += ["--session-id", session_id, "--system-prompt", SYSTEM_PROMPT]
     else:
         session_id = ranker["session_id"]
         cmd += ["--resume", session_id]
-    cmd.append(prompt)
 
     env = dict(os.environ)
     env["AGENTDASH_INTERNAL"] = "1"          # keeps our own hooks from firing
     env.pop("AGENTDASH_COLOR", None)
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, env=env,
-                              cwd=str(config.HOME),
+        proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                              env=env, cwd=str(config.HOME),
                               timeout=config.RANKER_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return None, {"error": "ranking agent timed out after %ds" % config.RANKER_TIMEOUT_SECONDS,

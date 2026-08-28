@@ -17,6 +17,7 @@ run input    test_input.py    2
 run flow     test_flow.py     2
 run limits   test_limits.py   2
 run memory   test_pressure.py 2
+run retrofit test_retrofit.py 2
 run install  test_install.py  2
 
 echo
