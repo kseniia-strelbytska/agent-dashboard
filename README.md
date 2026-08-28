@@ -62,7 +62,7 @@ both load.
 | --- | --- |
 | `~/.agent-dashboard/` | state, logs, the installed copy of the package |
 | `~/.local/bin/agentdash` | the launcher |
-| `~/Library/Application Support/iTerm2/Scripts/AutoLaunch/agentdash_daemon.py` | the window daemon |
+| `~/Library/Application Support/iTerm2/Scripts/AutoLaunch/agentdash_daemon.py` | the window daemon (a file, never a directory — iTerm2 treats directories there as script packages) |
 | `~/.claude/settings.json` | five hooks, tagged so uninstall finds them |
 | `~/.claude/CLAUDE.md` | a delimited block telling sessions how to report |
 | `~/.zshrc`, `~/.bashrc` | a delimited block that registers each new window |
@@ -96,6 +96,16 @@ disappears at `SessionEnd`. The waiting time turns red past one hour.
 `~/.claude/CLAUDE.md` tells every session to call `agentdash report` before it
 asks you anything and when it finishes work. If a session stops without
 reporting, its row says so rather than inventing a summary for it.
+
+**Resource budget.** Each rank spawns a `claude` process, which is not small, so
+the ranking agent runs under hard caps as well as the debounce: a floor between
+consecutive model calls, a rolling hourly ceiling, and a bound on how long one
+worker will loop. Past any of those the ordering falls back to the heuristic and
+the header says so, rather than the tool quietly spending your machine. Hooks
+skip spawning a worker when one is already running, so a busy machine does not
+get a herd of short-lived processes. The window daemon backs its poll off while
+nothing changes, and the dashboard re-parses state only when the file has
+actually moved. Measured idle cost of the daemon: about 25 MB and 0.1% CPU.
 
 **Ranking.** One long-lived Claude session is resumed on every update, so it
 accumulates judgement over the day instead of seeing each snapshot cold. Updates
@@ -131,7 +141,9 @@ default.
   "blocked_red_seconds": 3600,   // when the waiting time turns red
   "rank_debounce_seconds": 5,    // updates batched into one rerank
   "ranker_model": "sonnet",      // or "haiku" for a cheaper, blunter ranker
-  "ranking_enabled": true        // false: use the built-in heuristic only
+  "ranking_enabled": true,       // false: use the built-in heuristic only
+  "rank_min_interval_seconds": 20,  // floor between two model calls
+  "rank_max_per_hour": 60           // rolling ceiling; heuristic order beyond it
 }
 ```
 
@@ -165,7 +177,12 @@ Common ones:
   Enable Python API, then restart iTerm2. `agentdash doctor` reports this.
 - **Colours fight each other.** Another iTerm2 AutoLaunch script may also be
   recolouring windows. The installer detects those and offers to move them
-  aside; `agentdash doctor` lists them.
+  aside, into `~/.agent-dashboard/disabled-iterm-scripts/`. `agentdash uninstall`
+  puts them back.
+- **iTerm2 says "Cannot Run Script ... is malformed" on launch.** Something in
+  `Scripts/AutoLaunch/` is a directory rather than a `.py` file. Versions before
+  1.0.1 stashed disabled scripts there; `agentdash install` migrates them out
+  and `agentdash doctor` flags it.
 - **`agentdash: command not found`.** The launcher goes in `~/.local/bin`. Add
   it to your `PATH`, or open a new shell — the installed snippet adds it.
 - **Rows never appear.** Check `agentdash doctor` for the hook count, and that
@@ -177,6 +194,7 @@ Common ones:
 ./tests/run_all.sh               # everything
 python3 tests/test_layout.py     # width safety at 40-200 cols, hover stability
 python3 tests/test_input.py      # SGR mouse decoding, focus reporting, keys
+python3 tests/test_limits.py     # rank budget, worker herd control
 python3 tests/test_flow.py       # windows, colours, reports, hooks, reaping
 python3 tests/render_demo.py 100 # render a synthetic roster; --hover --all --stale --empty
 ```

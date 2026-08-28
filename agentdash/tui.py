@@ -145,6 +145,8 @@ class Dashboard:
         self.rows, self.cols = 24, 80
         self.line_owner: Dict[int, str] = {}
         self.last_rev = -1
+        self._cached_state = None
+        self._cached_stamp = None
         self.status_note = ""
         self.status_until = 0.0
         self._out = sys.stdout
@@ -175,6 +177,24 @@ class Dashboard:
         self._write(MOUSE_OFF + FOCUS_OFF + CURSOR_SHOW + ALT_SCREEN_OFF + RESET)
 
     # -- data ------------------------------------------------------------------
+
+    def _load_state(self) -> Dict:
+        """Re-read the state file only when it has actually changed on disk.
+
+        The event loop ticks eight times a second; parsing the document every
+        tick is pure waste, and this window is meant to stay open all day.
+        """
+        try:
+            st = os.stat(config.STATE_FILE)
+            stamp = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            stamp = None
+        if stamp is not None and stamp == self._cached_stamp and self._cached_state is not None:
+            return self._cached_state
+        data = state.read()
+        self._cached_state = data
+        self._cached_stamp = stamp
+        return data
 
     def _ordered(self, data: Dict) -> List[Dict]:
         sessions = list(data["sessions"].values())
@@ -636,7 +656,7 @@ class Dashboard:
             self._enter()
             last_paint = 0.0
             while True:
-                data = state.read()
+                data = self._load_state()
                 dirty = self._read_input(0.12)
                 if resized["flag"]:
                     resized["flag"] = False
