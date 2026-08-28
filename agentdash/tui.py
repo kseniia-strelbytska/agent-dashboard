@@ -258,7 +258,8 @@ class Dashboard:
             bits.append("$%.2f" % rk["cost_usd"])
         if self.cat:
             share = self.cat.cost_fraction(max(1.0, now - self._started)) * 100.0
-            bits.append("cat %.2f%%" % share)
+            forced = state.cat_override(now)
+            bits.append("cat %.2f%%%s" % (share, " (%s: forced)" % forced if forced else ""))
         if rk.get("retired"):
             bits.append("%d refresh%s" % (rk["retired"], "" if rk["retired"] == 1 else "es"))
         left = " " + " · ".join(bits)
@@ -521,6 +522,7 @@ class Dashboard:
         ("1-9", "open context", "context"),
         ("pet", "the cat", "cat"),
         ("o", "jump to window", "jump"),
+        ("w", "wake/sleep cat", "cat"),
         ("q", "quit", "quit"),
         ("a", "all/fold", "all"),
         ("r", "rerank", "rerank"),
@@ -558,6 +560,9 @@ class Dashboard:
             "  1 - 9      open or close that session's ranker-only context",
             "  o          bring the top session's iTerm2 window to the front",
             "  m          mouse reporting; turn it off to select text with the mouse",
+            "  w           force the cat awake, then asleep, then back to real",
+            "              (for demos; it expires after 30 minutes on its own,",
+            "               and the header says so the whole time it is on)",
             "",
             "  The cat lives in the gaps between cards, so it can never cover one.",
             "  It sits beside a session shortly before that timer turns red, walks",
@@ -659,7 +664,8 @@ class Dashboard:
             data, numbered, self.cols, self.red_after,
             decision_open=bool(self.open_id),
             pressure_level=mem.get("level", "normal"),
-            targets=getattr(self, "strip_x", {}), now=now)
+            targets=getattr(self, "strip_x", {}),
+            override=state.cat_override(now), now=now)
         first = len(lines) + 1
         for text in self.cat.draw(self.cols):
             lines.append(Line(text))
@@ -680,7 +686,8 @@ class Dashboard:
             data, numbered, self.cols, self.red_after,
             decision_open=bool(self.open_id),
             pressure_level=mem.get("level", "normal"),
-            targets=getattr(self, "strip_x", {}), now=now)
+            targets=getattr(self, "strip_x", {}),
+            override=state.cat_override(now), now=now)
         if not changed:
             return
         buf = []
@@ -742,6 +749,15 @@ class Dashboard:
                 self.open_id = None if self.open_id == sid else sid
             else:
                 self._note("no session %d" % index)
+            return True
+        if key in ("w", "W"):
+            if not self.cat:
+                self._note("the cat is off")
+                return True
+            current = state.cat_override()
+            nxt = {None: "awake", "awake": "asleep", "asleep": None}[current]
+            state.set_cat_override(nxt)
+            self._note("cat: %s" % (nxt + " (forced, 30 min)" if nxt else "back to the real signal"))
             return True
         if key in ("a", "A"):
             self.show_all = not self.show_all

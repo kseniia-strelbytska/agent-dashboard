@@ -245,6 +245,16 @@ def cmd_bridge(args) -> int:
     return 0
 
 
+def cmd_cat(args) -> int:
+    mode = {"auto": None, "wake": "awake", "sleep": "asleep"}[args.mode]
+    state.set_cat_override(mode)
+    if mode is None:
+        _p("cat follows the real signal again")
+    else:
+        _p("cat forced %s for 30 minutes; the dashboard header says so" % mode)
+    return 0
+
+
 def cmd_reset(args) -> int:
     def mutate(data):
         data["sessions"] = {}
@@ -327,6 +337,10 @@ def build_parser() -> argparse.ArgumentParser:
     br.add_argument("action", choices=("install", "remove", "list", "ingest"))
     br.add_argument("container", nargs="?", help="container name or id")
     br.set_defaults(func=cmd_bridge)
+
+    cat = sub.add_parser("cat", help="force the cat awake or asleep, for demos")
+    cat.add_argument("mode", choices=("auto", "wake", "sleep"))
+    cat.set_defaults(func=cmd_cat)
 
     sub.add_parser("reset", help="clear all sessions and the ranking session").set_defaults(func=cmd_reset)
     sub.add_parser("version", help="print the version").set_defaults(func=cmd_version)

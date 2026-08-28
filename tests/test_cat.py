@@ -164,6 +164,33 @@ def main():
     check(c._sleepy(old, now) is True, "a nine-hour day is sleepy")
     check(c._sleepy(reversed_a_lot, now) is True, "so is work being sent back repeatedly")
 
+    print("the demo override forces the signal, and admits it")
+    c7 = cat_module.Cat()
+    tired = {"sessions": {"a": {"started": now - 9 * 3600}}}
+    c7.update(tired, ordered, 100, d.red_after, False, "normal", now=now)
+    check(c7.mood == "sleep", "a nine-hour day really does put it to sleep")
+    c7.update(tired, ordered, 100, d.red_after, False, "normal",
+              override="awake", now=now + 1)
+    check(c7.mood != "sleep", "forcing it awake overrides that")
+    fresh = {"sessions": {"a": {"started": now - 60}}}
+    c7.update(fresh, ordered, 100, d.red_after, False, "normal",
+              override="asleep", now=now + 2)
+    check(c7.mood == "sleep", "and forcing it asleep works the other way")
+    c7.update(tired, ordered, 100, d.red_after, False, "normal",
+              override=None, now=now + 3)
+    check(c7.mood == "sleep", "with no override the real signal is back")
+
+    state.set_cat_override("awake", seconds=60)
+    check(state.cat_override(now) == "awake", "the override is stored")
+    check(state.cat_override(now + 3600) is None,
+          "and expires by itself, so a demo cannot quietly outlive the demo")
+    header = " ".join(ANSI.sub("", l.text) for l in board().compose(state.read())[:3])
+    check("forced" in header,
+          "and the header says the signal is being forced, the whole time")
+    state.set_cat_override(None)
+    header = " ".join(ANSI.sub("", l.text) for l in board().compose(state.read())[:3])
+    check("forced" not in header, "and stops saying so once it is off")
+
     print("petting gives hearts and changes nothing else")
     c = cat_module.Cat()
     before = {k: v for k, v in vars(c).items() if k not in ("hearts", "_last_pet", "seconds")}

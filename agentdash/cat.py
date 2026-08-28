@@ -246,6 +246,7 @@ class Cat:
     def update(self, data: Dict, ordered: List[Dict], cols: int, red_after: float,
                decision_open: bool, pressure_level: str = "normal",
                targets: Optional[Dict[int, int]] = None,
+               override: Optional[str] = None,
                now: Optional[float] = None) -> bool:
         """Advance the cat. Returns True if anything visible changed."""
         started = time.perf_counter()
@@ -274,7 +275,16 @@ class Cat:
             drag = 2.0 if pressure_level == "warning" else 1.0
 
             petted = now - self._last_pet < 1.4
-            sleepy = self._sleepy(data, now)
+            # An override forces the sleepiness signal one way or the other.
+            # It is for demonstrating the cat, so it is always shown in the
+            # header while it is on - a silently overridden signal is worse
+            # than no signal.
+            if override == "awake":
+                sleepy = False
+            elif override == "asleep":
+                sleepy = True
+            else:
+                sleepy = self._sleepy(data, now)
             warn = self.warning_index(ordered, red_after, now)
 
             if petted:

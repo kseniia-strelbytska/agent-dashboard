@@ -241,6 +241,13 @@ session count again, which the pace already carries. And worry never runs at the
 same time as sleepiness or petting — a sleeping cat that is also sweating says
 two things at once and therefore neither.
 
+**Showing it to someone.** The sleepiness signal is real, which makes it awkward
+to demonstrate: you cannot summon a nine-hour day on request. `w` in the
+dashboard, or `agentdash cat wake|sleep|auto`, forces it either way. While an
+override is on the header reads `cat 0.16% (awake: forced)` for as long as it
+lasts, and it expires by itself after thirty minutes — a silently overridden
+signal would be worse than no signal at all.
+
 **Petting it is the only interaction in this tool with no consequence.** Every
 other key is a decision, an approval, a commitment. Hovering the cat sends
 hearts and changes nothing — not the ordering, not a session, not a byte of
@@ -284,6 +291,7 @@ sticks.
 | `r` | force a rerank now (costs one model call) |
 | `o` | bring the top session's iTerm2 window to the front |
 | `m` | mouse reporting, off by default; on, a click jumps to that window |
+| `w` | force the cat awake, then asleep, then back to the real signal |
 | `?` | help |
 | `q` | quit |
 

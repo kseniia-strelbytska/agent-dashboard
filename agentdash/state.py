@@ -342,6 +342,30 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+CAT_OVERRIDE_SECONDS = 30 * 60
+
+
+def cat_override(now: Optional[float] = None) -> Optional[str]:
+    """'awake', 'asleep', or None for the real signal. Expires on its own."""
+    now = now or time.time()
+    meta = read()["meta"].get("cat_override") or {}
+    if meta.get("mode") and now < (meta.get("until") or 0):
+        return meta["mode"]
+    return None
+
+
+def set_cat_override(mode: Optional[str], seconds: float = CAT_OVERRIDE_SECONDS) -> None:
+    def mutate(data):
+        if mode is None:
+            if not data["meta"].get("cat_override"):
+                return False
+            data["meta"]["cat_override"] = None
+        else:
+            data["meta"]["cat_override"] = {"mode": mode, "until": time.time() + seconds}
+        return True
+    update(mutate)
+
+
 def mark_looked() -> None:
     """Record that the user has just seen the dashboard."""
     def mutate(data):
