@@ -233,9 +233,13 @@ class Dashboard:
     def _header(self, data: Dict, lines: List[Line], now: float):
         sessions = list(data["sessions"].values())
         needing = [s for s in sessions if s.get("action_needed")]
+        done = [s for s in sessions if s.get("finished_since") and not s.get("action_needed")]
         title = " AGENT DASHBOARD "
         variants = [
-            "%d need action · %d live · %s" % (len(needing), len(sessions), time.strftime("%H:%M:%S")),
+            "%d need action · %d finished · %d live · %s"
+            % (len(needing), len(done), len(sessions), time.strftime("%H:%M:%S")),
+            "%d need action · %d done · %d live · %s"
+            % (len(needing), len(done), len(sessions), time.strftime("%H:%M")),
             "%d action · %d live · %s" % (len(needing), len(sessions), time.strftime("%H:%M")),
             "%d/%d · %s" % (len(needing), len(sessions), time.strftime("%H:%M")),
             "%d/%d" % (len(needing), len(sessions)),
@@ -322,6 +326,11 @@ class Dashboard:
 
     def _waited_segment(self, rec: Dict, skin: Dict, now: float) -> Tuple[str, int]:
         if not rec.get("blocked_since"):
+            if rec.get("finished_since"):
+                # Finished, not stuck. Deliberately the same weight as
+                # "running": it should read as information, not as a summons.
+                text = "finished " + fmt_duration(now - rec["finished_since"], short=True)
+                return fg(skin["muted"]) + text + RESET + bg(skin["bg"]), width_of(text)
             return fg(skin["faint"]) + "running" + RESET + bg(skin["bg"]), 7
         waited = now - rec["blocked_since"]
         text = "waited " + fmt_duration(waited)
@@ -465,8 +474,13 @@ class Dashboard:
         skin = self._row_palette(colour, dim=True)
         name = rec.get("name") or "?"
         tag = (rec.get("tag") or "-")[:14]
-        waited = (fmt_duration(now - rec["blocked_since"], short=True)
-                  if rec.get("blocked_since") else "\u2014")
+        if rec.get("blocked_since"):
+            waited = fmt_duration(now - rec["blocked_since"], short=True)
+        elif rec.get("finished_since"):
+            # A tick, not a clock: finished work is information, not a summons.
+            waited = "\u2713 " + fmt_duration(now - rec["finished_since"], short=True)
+        else:
+            waited = "\u2014"
         overdue = rec.get("blocked_since") and (now - rec["blocked_since"]) >= self.red_after
         new = (rec.get("last_report") or 0) > (data["meta"].get("last_look") or 0)
 
@@ -608,7 +622,12 @@ class Dashboard:
             return lines
 
         action = [r for r in ordered if r.get("action_needed")]
-        top = ordered if self.show_all else (action[:self.top_n] or ordered[:1])
+        finished = [r for r in ordered
+                    if r.get("finished_since") and not r.get("action_needed")]
+        # Anything genuinely waiting comes first; finished work fills whatever
+        # room is left above the fold rather than competing for it.
+        promoted = action + [r for r in finished if r not in action]
+        top = ordered if self.show_all else (promoted[:self.top_n] or ordered[:1])
         rest = [r for r in ordered if r not in top]
 
         # One numbering across the strip, the cards and the number keys.
@@ -626,9 +645,12 @@ class Dashboard:
         lines.extend(strip)
 
         if not action:
-            lines.append(Line("   " + fg("#5AA469") + "Nothing needs you right now." + RESET
+            note = ("Nothing needs you right now."
+                    if not finished else
+                    "Nothing is stuck. %d finished and unread." % len(finished))
+            lines.append(Line("   " + fg("#5AA469") + note + RESET
                               + DIM + fg(GREY) + truncate("  Showing the busiest session.",
-                                                          max(0, self.cols - 34)) + RESET))
+                                                          max(0, self.cols - 34 - width_of(note))) + RESET))
             lines.append(Line(""))
 
         for i, rec in enumerate(top, start=1):

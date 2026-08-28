@@ -8,8 +8,13 @@ from typing import List, Optional, Tuple
 from . import daemon_client, names, ranker, state
 
 STATUSES = ("working", "done", "question", "blocked")
-# Statuses other than `working` mean the session is waiting on the human.
-ACTION_STATUSES = ("done", "question", "blocked")
+# Only these two mean a human is actually being waited on. `done` used to be in
+# here, which meant a session that finished cleanly competed for the top of the
+# dashboard with one stuck on a missing credential, and the red timer stopped
+# meaning anything. Finishing is now its own quieter tier: still visible, never
+# red, never counted as needing action.
+ACTION_STATUSES = ("question", "blocked")
+QUIET_STATUSES = ("done",)
 
 SUGGESTED_TAGS = (
     "tests", "docs", "infra", "implementation", "debugging", "exploration",
@@ -85,6 +90,7 @@ def submit(session_id: str, status: str, tag: Optional[str], summary: Optional[s
     window_id, colour = resolve_window(iterm_uuid)
     now = time.time()
     action = status in ACTION_STATUSES
+    finished = status in QUIET_STATUSES
 
     fields = {
         "status": status,
@@ -121,6 +127,7 @@ def submit(session_id: str, status: str, tag: Optional[str], summary: Optional[s
         state.apply_binding(data, rec, iterm_uuid, window_id, colour)
         rec["last_seen"] = now
         rec["action_needed"] = action
+        rec["finished_since"] = (rec.get("finished_since") or now) if finished else None
         rec["reports"] = rec.get("reports", 0) + (1 if self_reported else 0)
         if self_reported:
             rec["prompt_at_last_report"] = rec.get("prompts") or 0

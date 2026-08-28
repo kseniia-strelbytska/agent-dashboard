@@ -120,8 +120,31 @@ def main():
 
     run_hook("stop", {"session_id": "sess-1", "cwd": "/tmp/repo"})
     rec = state.read()["sessions"]["sess-1"]
-    check(rec["action_needed"] is True, "Stop marks the session as waiting")
+    check(rec["action_needed"] is False,
+          "finishing a turn does not demand attention")
+    check(rec["finished_since"] is not None,
+          "but it is recorded as finished and unread")
+    check(rec["blocked_since"] is None, "and starts no red timer")
     check(rec["self_reported"] is False, "Stop without a report is flagged, not invented")
+
+    print("finished is quieter than stuck")
+    report.submit("sess-quiet", "done", "docs", "A. B. C.", "a. B. C. D.", name="wrote docs")
+    quiet = state.read()["sessions"]["sess-quiet"]
+    check(quiet["action_needed"] is False and quiet["finished_since"],
+          "status=done is finished, not waiting")
+    report.submit("sess-stuck", "blocked", "infra", "A. B. C.", "a. B. C. D.", name="needs a key")
+    stuck = state.read()["sessions"]["sess-stuck"]
+    check(stuck["action_needed"] is True and stuck["blocked_since"],
+          "status=blocked still is")
+    order = [n for n, _, _ in ranker.heuristic_order(
+        [state.read()["sessions"]["sess-quiet"], state.read()["sessions"]["sess-stuck"]])]
+    check(order[0] == "needs-key",
+          "and stuck outranks finished however long finished has waited (%s)" % order)
+    report.submit("sess-quiet", "working", "docs", "Back. At. It.", "a. B. C. D.")
+    check(state.read()["sessions"]["sess-quiet"]["finished_since"] is None,
+          "going back to work clears the finished mark")
+    state.remove_session("sess-quiet")
+    state.remove_session("sess-stuck")
 
     run_hook("session-start", {"session_id": "sess-2", "cwd": "/tmp/other"})
     check("sess-2" in state.read()["sessions"], "SessionStart creates a row")

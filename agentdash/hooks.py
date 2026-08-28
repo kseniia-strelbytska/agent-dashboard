@@ -133,7 +133,8 @@ def _base_fields(payload: Dict) -> Dict:
     return fields
 
 
-def _set(session_id: str, fields: Dict, action: Optional[bool], status: Optional[str]) -> None:
+def _set(session_id: str, fields: Dict, action: Optional[bool], status: Optional[str],
+         finished: Optional[bool] = None) -> None:
     now = time.time()
 
     def mutate(data):
@@ -165,6 +166,8 @@ def _set(session_id: str, fields: Dict, action: Optional[bool], status: Optional
                     rec["blocked_since"] = now
             else:
                 rec["blocked_since"] = None
+        if finished is not None:
+            rec["finished_since"] = (rec.get("finished_since") or now) if finished else None
         rec_now = dict(rec)
         rec_now["last_seen"] = 0
         prev = json.loads(before)
@@ -185,7 +188,7 @@ def session_start() -> int:
     if not sid:
         return 0
     _log("session_start", sid)
-    _set(sid, _base_fields(payload), action=False, status="working")
+    _set(sid, _base_fields(payload), action=False, status="working", finished=False)
     return 0
 
 
@@ -239,7 +242,7 @@ def notification() -> int:
     if message:
         fields["notification"] = message[:200]
     _log("notification", "%s %s" % (sid, message[:60]))
-    _set(sid, fields, action=True, status="question")
+    _set(sid, fields, action=True, status="question", finished=False)
     ranker.request_rank()
     ranker.spawn_worker()
     return 0
@@ -267,7 +270,12 @@ def stop() -> int:
                 "Open its window to see what it did. "
                 "Its instructions ask it to report before stopping; it skipped that step.")
     _log("stop", sid)
-    _set(sid, fields, action=True, status=rec.get("status") if rec.get("status") == "question" else "done")
+    # Ending a turn is finishing, not demanding. A session that stopped with a
+    # real question already said so through the Notification hook.
+    if rec.get("status") == "question":
+        _set(sid, fields, action=True, status="question", finished=False)
+    else:
+        _set(sid, fields, action=False, status="done", finished=True)
     ranker.request_rank()
     ranker.spawn_worker()
     return 0

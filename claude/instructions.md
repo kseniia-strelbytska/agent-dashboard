@@ -28,8 +28,16 @@ blocks you.
 4. **When you become genuinely stuck** on something the user must resolve —
    a missing credential, a failing external service. Use `--status blocked`.
 
-`working` means nothing is needed from the user. The other three all mean the
-user is being waited on, and start a visible timer that turns red after an hour.
+There are three tiers, and the difference matters:
+
+- `working` — nothing is needed from the user.
+- `done` — you finished and it is worth a glance, but nothing is blocked. This
+  is quiet: it shows on the dashboard as finished, and never starts the red
+  timer. Use it whenever you hand back without a question.
+- `question` and `blocked` — the user is genuinely being waited on. These start
+  a visible timer that turns red after an hour, and they compete for the top of
+  the dashboard. Do not use them to mean "I have finished"; that dilutes the one
+  signal the dashboard exists to give.
 
 **`--summary` is three sentences, shown to the user.** Write "what changed since
 you last looked", not a status label. Say what you actually did, what state
