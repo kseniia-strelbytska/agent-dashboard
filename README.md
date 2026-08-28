@@ -175,11 +175,16 @@ The row is coloured correctly too: the host process running
 iTerm2 window, so a containerised session appears in the colour of the window
 you are actually watching it in.
 
-Two honest limits. A session already running in the container picks the hooks up
-only if Claude Code re-reads its settings between turns; otherwise it appears
-when that session next restarts. And the container's tool sandbox may confine
-writes to the project directory, so the reporter falls back from the shared root
-to `<project>/.agentdash-spool`, which the host scans as well.
+The container's tool sandbox confines writes to the working directory, so the
+reporter falls back from the shared root to `<cwd>/.agentdash-spool` - and that
+`cwd` can be any depth under the mount, a git worktree for instance. The host
+scans the mount roots, the working directory of every container session it
+already knows about, and, on a slow cadence, a bounded walk of the shared tree.
+Where a spool lands inside a repository it is added to `.git/info/exclude`, which
+is local and never committed; your tracked `.gitignore` is not touched.
+
+A session already running in the container picks the hooks up as soon as Claude
+Code next reads its settings, which in practice it does.
 
 ## Reporting from a session
 

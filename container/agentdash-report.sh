@@ -9,8 +9,27 @@
 # Deliberately POSIX sh: containers cannot be assumed to have anything else.
 
 set -u
-STATE_DIR="${AGENTDASH_CONTAINER_HOME:-$HOME/.agentdash}"
-mkdir -p "$STATE_DIR/sessions" 2>/dev/null || true
+
+# `: > file` looks harmless but `:` is a POSIX *special builtin*, and a
+# redirection error on one of those terminates a non-interactive shell. Under
+# the container's sandbox $HOME is read-only, so that killed the reporter after
+# it had already written its record. touch is a regular utility: it just fails.
+mark() { touch "$1" 2>/dev/null || return 0; }
+
+# Fall back to somewhere writable if the sandbox has made $HOME read-only, so
+# the bookkeeping markers survive and the hooks stop re-injecting instructions.
+pick_state_dir() {
+  for d in "${AGENTDASH_CONTAINER_HOME:-}" "$HOME/.agentdash" \
+           "${TMPDIR:-/tmp}/agentdash" /tmp/agentdash; do
+    [ -n "$d" ] || continue
+    if mkdir -p "$d/sessions" 2>/dev/null && [ -w "$d/sessions" ]; then
+      printf '%s' "$d"; return 0
+    fi
+  done
+  printf '%s' "${TMPDIR:-/tmp}/agentdash"
+}
+
+STATE_DIR="$(pick_state_dir)"
 
 status=""; name=""; tag=""; summary=""; context=""; sid="${CLAUDE_CODE_SESSION_ID:-}"
 while [ $# -gt 0 ]; do
@@ -64,6 +83,6 @@ file="$SPOOL/$now-$$-$(od -An -N3 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' ||
 
 # Remember that this session has reported, so the hooks stop handing it the
 # instructions.
-: > "$STATE_DIR/sessions/$sid.reported" 2>/dev/null || true
+mark "$STATE_DIR/sessions/$sid.reported"
 rm -f "$STATE_DIR/sessions/$sid.stopped" 2>/dev/null || true
 echo "posted: $status${name:+ ($name)} -> dashboard spool"
