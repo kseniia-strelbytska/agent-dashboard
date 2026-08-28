@@ -209,11 +209,10 @@ contexts longer than four) are clipped, with a note on stderr.
 
 An orange cat lives in the gaps between the cards. It obeys three rules.
 
-**It yields.** It only ever occupies a gutter — the blank line between two cards
-— so it structurally cannot cover a summary, a tag or a waiting timer. It leaves
-the gutter of any session whose timer has already gone red, and it stops moving
-entirely while a decision is expanded. If something needs attention, the cat is
-somewhere else.
+**It yields.** It has its own lane, above every card, so it structurally cannot
+cover a summary, a tag or a waiting timer. It stops moving entirely while a
+decision is expanded, and it ignores a session whose timer has already gone red
+— the point is the warning before the line is crossed, not noise after.
 
 **It costs nothing.** Eight frames a second at most, and only the two lines it
 occupies are redrawn — the rest of the frame is not rebuilt. It freezes
@@ -226,8 +225,9 @@ confirmation, no guilt text.
 
 Beyond that it carries three things that are true but graceless to say in words:
 
-- it **sits beside a session shortly before that session's timer turns red** — a
-  soft early warning that costs nothing to ignore;
+- it **settles above the number of a session shortly before that session's timer
+  turns red** — it walks over and sits on that session's cell in the token
+  strip, a soft early warning that costs nothing to ignore;
 - its **pace tracks how many sessions are open**, ambling at two and trotting at
   six, so you read your own fragmentation in peripheral vision without a number
   appearing anywhere;

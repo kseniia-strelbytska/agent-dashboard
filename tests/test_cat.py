@@ -37,55 +37,65 @@ def main():
     data = state.read()
     now = time.time()
 
-    print("it stays in the gutters, always")
+    print("it lives above every card, in its own lane")
     d = board()
     lines = d.compose(data)
     check(d.cat is not None, "the cat is on by default")
-    top, bottom = d.cat_rows
-    check(top > 0, "and it is placed somewhere")
-    for row in (top, bottom):
-        line = lines[row - 1]
-        check(line.gutter is not None,
-              "row %d is a gutter, not a card" % row)
-    card_rows = [i + 1 for i, l in enumerate(lines) if l.session_id and l.gutter is None]
-    check(top not in card_rows and bottom not in card_rows,
-          "the cat never occupies a line that belongs to a card")
+    first, last = d.cat_rows
+    check(first > 0 and last - first + 1 == cat_module.HEIGHT_ROWS,
+          "it occupies exactly %d rows" % cat_module.HEIGHT_ROWS)
+    check(len(cat_module.FRAMES["walk_a"]) >= 6, "and is at least six pixels tall")
+    card_rows = [i + 1 for i, l in enumerate(lines) if l.session_id]
+    check(all(r not in card_rows for r in range(first, last + 1)),
+          "no cat row belongs to any card")
+    check(card_rows and first < min(card_rows),
+          "and the whole cat is above the first card (%d < %d)" % (first, min(card_rows)))
+
+    ordered = sorted(data["sessions"].values(), key=lambda r: r.get("priority") or 99)
+    c = cat_module.Cat()
 
     print("it stays away from a session that has already gone red")
-    reds = [i for i, r in enumerate(sorted(data["sessions"].values(),
-                                           key=lambda r: r.get("priority") or 99))
+    reds = [i for i, r in enumerate(ordered)
             if r.get("blocked_since") and now - r["blocked_since"] >= d.red_after]
-    c = cat_module.Cat()
-    ordered = sorted(data["sessions"].values(), key=lambda r: r.get("priority") or 99)
-    target = c._target_gutter(ordered, d.red_after, now, len(ordered))
-    check(target not in reds, "an already-red session is not chosen (%s vs %s)" % (target, reds))
+    check(c.warning_index(ordered, d.red_after, now) not in reds,
+          "an already-red session is not chosen (reds: %s)" % reds)
 
-    print("it sits beside a session just before that session turns red")
+    print("it settles above the session just before that session turns red")
     soon = [dict(ordered[0]), dict(ordered[1])]
     soon[0]["blocked_since"] = now - d.red_after * 0.9      # nearly red
     soon[1]["blocked_since"] = now - 10                     # just started
-    check(c._target_gutter(soon, d.red_after, now, 2) == 0,
+    check(c.warning_index(soon, d.red_after, now) == 0,
           "it picks the one closest to going red")
     soon[0]["blocked_since"] = now - 60                     # nowhere near
-    check(c._target_gutter(soon, d.red_after, now, 2) is None,
+    check(c.warning_index(soon, d.red_after, now) is None,
           "and picks nobody when nobody is close")
+
+    print("and walks to that session's column in the strip")
+    c2 = cat_module.Cat()
+    soon[0]["blocked_since"] = now - d.red_after * 0.9
+    c2.x = 60.0
+    for step in range(80):
+        c2.update({"sessions": {}}, soon, 100, d.red_after, False, False,
+                  targets={0: 12}, now=now + step)
+    check(abs(c2.x - 12) < 1.0, "it arrives at the column (x=%.0f)" % c2.x)
+    check(c2.mood == "sit", "and sits down there")
 
     print("it freezes when attention is required, and when memory is short")
     c = cat_module.Cat()
     c._last_step = 0
-    moved = c.update(data, ordered, 3, 100, d.red_after,
+    moved = c.update(data, ordered, 100, d.red_after,
                      decision_open=True, under_pressure=False, now=now)
     check(moved is False and c.frozen, "an expanded decision freezes it")
-    moved = c.update(data, ordered, 3, 100, d.red_after,
+    moved = c.update(data, ordered, 100, d.red_after,
                      decision_open=False, under_pressure=True, now=now)
     check(moved is False and c.frozen, "memory pressure freezes it")
     x_before, frame_before = c.x, c.frame
     for i in range(20):
-        c.update(data, ordered, 3, 100, d.red_after, False, True, now=now + i)
+        c.update(data, ordered, 100, d.red_after, False, True, now=now + i)
     check(c.x == x_before and c.frame == frame_before,
           "and it really does not move while frozen")
     c.pet(now)
-    c.update(data, ordered, 3, 100, d.red_after, False, True, now=now + 5)
+    c.update(data, ordered, 100, d.red_after, False, True, now=now + 5)
     check(c.hearts == [], "hearts still expire while frozen, rather than sticking")
 
     print("its pace tracks how many sessions are open")
@@ -120,7 +130,7 @@ def main():
     c = cat_module.Cat()
     start = time.perf_counter()
     for i in range(240):                       # 30 seconds at 8fps
-        c.update(data, ordered, 3, 100, d.red_after, False, False, now=now + i * 0.125)
+        c.update(data, ordered, 100, d.red_after, False, False, now=now + i * 0.125)
         c.draw(100)
     elapsed = time.perf_counter() - start
     check(c.seconds < 0.5, "240 frames of cat cost %.0f ms of CPU" % (c.seconds * 1000))

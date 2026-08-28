@@ -361,8 +361,12 @@ class Dashboard:
             shown.append((text, colour, need - width_of(text)))
             used += need
         out = [DIM + fg(FAINT) + label + RESET]
-        for text, colour, gap in shown:
+        cursor = width_of(label)
+        self.strip_x = {}
+        for i, (text, colour, gap) in enumerate(shown, start=1):
             out.append(" " * gap + fg(colour) + BOLD + text + RESET)
+            self.strip_x[i] = cursor + gap
+            cursor += gap + width_of(text)
         hidden = len(cells) - len(shown)
         if hidden and used + 6 <= room:
             out.append(DIM + fg(GREY) + "  +%d" % hidden + RESET)
@@ -433,9 +437,7 @@ class Dashboard:
 
         if self.open_id == sid:
             self._private_block(rec, indent, body_width, skin, lines, sid)
-        lines.append(Line("", sid, gutter=index - 1))
-        if self.cat:
-            lines.append(Line("", sid, gutter=index - 1))
+        lines.append(Line("", sid))
 
     def _private_block(self, rec: Dict, indent: str, body_width: int, skin: Dict,
                        lines: List[Line], sid: str):
@@ -597,6 +599,7 @@ class Dashboard:
                 self.cols - 4) + RESET))
             lines.append(Line(""))
             self._footer(lines)
+            self.cat_rows = (-1, -1)
             return lines
 
         action = [r for r in ordered if r.get("action_needed")]
@@ -608,7 +611,14 @@ class Dashboard:
         self.index_map = {i: r["id"] for i, r in enumerate(numbered, start=1)}
         if self.open_id not in {r["id"] for r in ordered}:
             self.open_id = None
-        self._token_strip(numbered, lines)
+
+        # The strip is built first so its column positions are known, but it is
+        # appended after the cat's lane: the cat sits above everything, and
+        # above the number of whichever session it is watching.
+        strip: List[Line] = []
+        self._token_strip(numbered, strip)
+        self._cat_lane(lines, data, numbered, now)
+        lines.extend(strip)
 
         if not action:
             lines.append(Line("   " + fg("#5AA469") + "Nothing needs you right now." + RESET
@@ -631,34 +641,55 @@ class Dashboard:
 
         lines.append(Line(""))
         self._footer(lines)
-        self._place_cat(lines, data, top, now)
         return lines
 
-    def _place_cat(self, lines: List[Line], data: Dict, top: List[Dict], now: float):
-        """Draw the cat into one gutter, if it has one and is allowed to move."""
+    def _cat_lane(self, lines: List[Line], data: Dict, numbered: List[Dict],
+                  now: float) -> None:
+        """The cat's own three rows, above every card.
+
+        It cannot overlap a card because it is never on one; and it settles
+        above the strip cell of whichever session is closest to going red, so
+        "beside the one about to need you" is literally where it points.
+        """
         self.cat_rows = (-1, -1)
         if not self.cat:
             return
-        gutters: Dict[int, List[int]] = {}
-        for i, line in enumerate(lines):
-            if line.gutter is not None:
-                gutters.setdefault(line.gutter, []).append(i)
-        usable = sorted(g for g, rows in gutters.items() if len(rows) >= 2)
-        if not usable:
-            return
         mem = pressure.read()
-        self.cat.update(data, top, len(usable), self.cols,
-                        self.red_after, decision_open=bool(self.open_id),
-                        under_pressure=pressure.should_defer(self.cfg, mem)[0], now=now)
-        # Remembered so the cat can be animated on its own, without rebuilding
-        # the whole frame eight times a second.
-        self._cat_ctx = (data, top, usable, gutters)
-        chosen = usable[min(self.cat.gutter, len(usable) - 1)]
-        rows = gutters[chosen][:2]
-        cat_top, cat_bottom = self.cat.draw(self.cols)
-        lines[rows[0]] = Line(cat_top, lines[rows[0]].session_id, gutter=chosen)
-        lines[rows[1]] = Line(cat_bottom, lines[rows[1]].session_id, gutter=chosen)
-        self.cat_rows = (rows[0] + 1, rows[1] + 1)     # 1-based screen rows
+        self.cat.update(
+            data, numbered, self.cols, self.red_after,
+            decision_open=bool(self.open_id),
+            under_pressure=pressure.should_defer(self.cfg, mem)[0],
+            targets=getattr(self, "strip_x", {}), now=now)
+        first = len(lines) + 1
+        for text in self.cat.draw(self.cols):
+            lines.append(Line(text))
+        self.cat_rows = (first, first + cat_module.HEIGHT_ROWS - 1)
+        self._cat_ctx = (data, numbered, first)
+
+    def tick_cat(self, now: float) -> None:
+        """Animate the cat without recomposing anything else.
+
+        Only its own rows are rewritten, which is what keeps eight frames a
+        second honest against the cost claim in the header.
+        """
+        if not self.cat or not self._cat_ctx or self.cat_rows[0] < 1:
+            return
+        data, numbered, first = self._cat_ctx
+        mem = pressure.read()
+        changed = self.cat.update(
+            data, numbered, self.cols, self.red_after,
+            decision_open=bool(self.open_id),
+            under_pressure=pressure.should_defer(self.cfg, mem)[0],
+            targets=getattr(self, "strip_x", {}), now=now)
+        if not changed:
+            return
+        buf = []
+        for offset, text in enumerate(self.cat.draw(self.cols)):
+            row = first + offset
+            if row > self.rows:
+                return
+            buf.append(CSI + "%d;1H" % row + RESET + text + CSI + "K")
+        self._write("".join(buf))
 
     def paint(self, data: Dict):
         lines = self.compose(data)
@@ -675,35 +706,6 @@ class Dashboard:
             else:
                 buf.append(CSI + "%d;1H" % (row + 1))
                 buf.append(CSI + "K")
-        self._write("".join(buf))
-
-    def tick_cat(self, now: float) -> None:
-        """Animate the cat without recomposing anything else.
-
-        Only the two rows it occupies are rewritten. This is what keeps eight
-        frames a second honest against the cost claim in the header.
-        """
-        if not self.cat or not self._cat_ctx or self.cat_rows[0] < 1:
-            return
-        data, top, usable, gutters = self._cat_ctx
-        mem = pressure.read()
-        changed = self.cat.update(
-            data, top, len(usable), self.cols, self.red_after,
-            decision_open=bool(self.open_id),
-            under_pressure=pressure.should_defer(self.cfg, mem)[0], now=now)
-        if not changed:
-            return
-        chosen = usable[min(self.cat.gutter, len(usable) - 1)]
-        rows = gutters[chosen][:2]
-        if len(rows) < 2:
-            return
-        self.cat_rows = (rows[0] + 1, rows[1] + 1)
-        cat_top, cat_bottom = self.cat.draw(self.cols)
-        buf = []
-        for screen_row, text in zip(self.cat_rows, (cat_top, cat_bottom)):
-            if screen_row > self.rows:
-                return
-            buf.append(CSI + "%d;1H" % screen_row + RESET + text + CSI + "K")
         self._write("".join(buf))
 
     # -- input -----------------------------------------------------------------

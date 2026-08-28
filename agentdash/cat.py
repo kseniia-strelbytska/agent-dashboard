@@ -33,14 +33,39 @@ from . import palette
 # real per-pixel colour on any of the eight card backgrounds.
 #   o rim   B body   L belly   e eye   n muzzle   ^ happy eye
 FRAMES: Dict[str, List[str]] = {
-    "walk_a": ["o......o.o.", "ooooooooooo", ".oBLLLLBBeB", "...o.o.o.o."],
-    "walk_b": ["o......o.o.", "ooooooooooo", ".oBLLLLBBeB", "..o..o..o.o"],
-    "sit":    ["oo.....o.o.", ".oooooooooo", ".oBBLLLBBeB", "..ooooooooo"],
-    "sleep":  ["...........", "..ooooooooo", ".oBLLLLLBnB", "..ooooooooo"],
-    "happy":  ["o......o.o.", "ooooooooooo", ".oBLLLLBB^B", "...o.o.o.o."],
+    "walk_a": ["..........o.o.",
+               "o.......oBBBBo",
+               "oo..ooooBBeBBo",
+               ".oooBBBBBBBnBo",
+               "..oBLLLLLLBBo.",
+               "...oo.oo.oo..."],
+    "walk_b": ["..........o.o.",
+               "o.......oBBBBo",
+               "oo..ooooBBeBBo",
+               ".oooBBBBBBBnBo",
+               "..oBLLLLLLBBo.",
+               "..oo..oo..oo.."],
+    "sit":    ["..........o.o.",
+               "oo......oBBBBo",
+               "o.o..oooBBeBBo",
+               "o.oooBBBBBBnBo",
+               "o..oBLLLLLBBo.",
+               "..ooooooooooo."],
+    "sleep":  ["..............",
+               "..........o.o.",
+               "...ooooooBBBBo",
+               "..oBLLLLLLBnBo",
+               ".oBLLLLLLLLBo.",
+               "..ooooooooooo."],
+    "happy":  ["..........o.o.",
+               "o.......oBBBBo",
+               "oo..ooooBB^BBo",
+               ".oooBBBBBBBnBo",
+               "..oBLLLLLLBBo.",
+               "...oo.oo.oo..."],
 }
-WIDTH = 11
-HEIGHT_ROWS = 2          # terminal rows
+WIDTH = 14
+HEIGHT_ROWS = 3          # terminal rows: six pixel rows, two per row
 
 # Orange, but with a dark rim and a pale belly: flat orange disappears against
 # the docs card, whose colour is almost the same hue.
@@ -77,11 +102,11 @@ def _pixels(frame: str, facing: int) -> List[str]:
     return rows
 
 
-def render(frame: str, facing: int) -> Tuple[str, str]:
-    """Two terminal rows of styled text, no padding, transparent background."""
+def render(frame: str, facing: int) -> List[str]:
+    """Three terminal rows of styled text, no padding, transparent background."""
     rows = _pixels(frame, facing)
     out = []
-    for pair in ((0, 1), (2, 3)):
+    for pair in ((0, 1), (2, 3), (4, 5)):
         top_row, bottom_row = rows[pair[0]], rows[pair[1]]
         chunks = []
         for col in range(WIDTH):
@@ -95,7 +120,7 @@ def render(frame: str, facing: int) -> Tuple[str, str]:
             else:
                 chunks.append(_bg(INK[bottom]) + _fg(INK[top]) + "▀")
         out.append("".join(chunks) + RESET)
-    return out[0], out[1]
+    return out
 
 
 # --- behaviour ------------------------------------------------------------------
@@ -116,7 +141,6 @@ class Cat:
         self.facing = 1
         self.frame = "walk_a"
         self.mood = "walk"
-        self.gutter = 0
         self.hearts: List[List] = []          # [x, born]
         self._last_step = 0.0
         self._last_pet = 0.0
@@ -144,9 +168,13 @@ class Cat:
         steps_per_second = 0.8 + 0.45 * max(0, session_count - 1)
         return 1.0 / min(6.0, max(0.5, steps_per_second))
 
-    def _target_gutter(self, ordered: List[Dict], red_after: float,
-                       now: float, gutters: int) -> Optional[int]:
-        """The gutter above the session that is closest to going red."""
+    def warning_index(self, ordered: List[Dict], red_after: float,
+                      now: float) -> Optional[int]:
+        """Which session is closest to its timer turning red, if any.
+
+        Already-red sessions are excluded: the point is the warning before the
+        line is crossed, and once it is crossed the cat only adds noise.
+        """
         best, best_waited = None, 0.0
         for index, rec in enumerate(ordered):
             since = rec.get("blocked_since")
@@ -154,25 +182,21 @@ class Cat:
                 continue
             waited = now - since
             if waited >= red_after:
-                continue                      # already red: the cat stays away
+                continue
             if waited >= red_after * EARLY_WARNING_FRACTION and waited > best_waited:
                 best, best_waited = index, waited
-        if best is None or best >= gutters:
-            return None
         return best
 
     # -- update ----------------------------------------------------------------
 
-    def update(self, data: Dict, ordered: List[Dict], gutters: int, cols: int,
-               red_after: float, decision_open: bool, under_pressure: bool,
+    def update(self, data: Dict, ordered: List[Dict], cols: int, red_after: float,
+               decision_open: bool, under_pressure: bool,
+               targets: Optional[Dict[int, int]] = None,
                now: Optional[float] = None) -> bool:
         """Advance the cat. Returns True if anything visible changed."""
         started = time.perf_counter()
         try:
             now = now or time.time()
-            if gutters <= 0:
-                return False
-            self.gutter = min(self.gutter, gutters - 1)
 
             # Hearts expire before anything else, so a frozen cat does not sit
             # there surrounded by them until the freeze lifts.
@@ -190,45 +214,52 @@ class Cat:
 
             petted = now - self._last_pet < 1.4
             sleepy = self._sleepy(data, now)
-            target = self._target_gutter(ordered, red_after, now, gutters)
+            warn = self.warning_index(ordered, red_after, now)
 
             if petted:
                 mood = "happy"
             elif sleepy:
                 mood = "sleep"
-            elif target is not None:
+            elif warn is not None:
                 mood = "sit"
             else:
                 mood = "walk"
-
-            # A sleepy cat still curls up beside whoever is closest to going red:
-            # two signals, one behaviour, no extra vocabulary to learn.
-            want_gutter = target if target is not None else self.gutter
-            if mood == "walk" and now - self._last_step > self._pace(len(ordered)) * 6:
-                want_gutter = random.randrange(gutters)
-
-            if want_gutter != self.gutter:
-                self.gutter = want_gutter
-                changed = True
-
             if mood != self.mood:
                 self.mood = mood
                 changed = True
 
-            limit = max(1, cols - WIDTH - 2)
+            limit = float(max(1, cols - WIDTH - 2))
+            # A sleepy cat still settles beside whoever is closest to going red:
+            # two signals in one behaviour rather than a fourth to learn.
+            target = (targets or {}).get(warn) if warn is not None else None
+
+            if mood in ("sit", "sleep") and target is not None:
+                goal = float(min(max(1, target), int(limit)))
+                if abs(self.x - goal) > 0.5:
+                    if now - self._last_step >= self._pace(len(ordered)):
+                        self._last_step = now
+                        step = 1.0 if goal > self.x else -1.0
+                        self.facing = 1 if step > 0 else -1
+                        self.x += step
+                        self._flip = not self._flip
+                        self.frame = "walk_b" if self._flip else "walk_a"
+                        changed = True
+                    return changed
+                self.x = goal
+
             if mood == "walk":
                 if now - self._last_step >= self._pace(len(ordered)):
                     self._last_step = now
-                    self.x += self.facing * 1.0
+                    self.x += self.facing
                     if self.x <= 1 or self.x >= limit:
                         self.facing *= -1
-                        self.x = min(max(1.0, self.x), float(limit))
+                        self.x = min(max(1.0, self.x), limit)
                     self._flip = not self._flip
                     self.frame = "walk_b" if self._flip else "walk_a"
                     changed = True
             else:
                 self.frame = {"sit": "sit", "sleep": "sleep", "happy": "happy"}[mood]
-                self.x = min(max(1.0, self.x), float(limit))
+                self.x = min(max(1.0, self.x), limit)
             return changed
         finally:
             self.seconds += time.perf_counter() - started
@@ -251,29 +282,27 @@ class Cat:
 
     # -- drawing ----------------------------------------------------------------
 
-    def draw(self, cols: int) -> Tuple[str, str]:
-        """Exactly two terminal rows, left-padded to the cat's position.
+    def draw(self, cols: int) -> List[str]:
+        """Exactly three terminal rows, left-padded to the cat's position.
 
         Hearts sit in the upper row, to the right of the cat's head, so they
-        never overwrite the sprite and never need a third row.
+        never overwrite the sprite and never need a row of their own.
         """
         started = time.perf_counter()
         try:
-            top, bottom = render(self.frame, self.facing)
+            rows = render(self.frame, self.facing)
             left = int(self.x)
-            top_line = " " * left + top
-            bottom_line = " " * left + bottom
+            lines = [" " * left + r for r in rows]
             if self.hearts:
                 trail = []
-                for offset, (_, born) in enumerate(sorted(self.hearts, key=lambda h: h[1])):
+                for _, born in sorted(self.hearts, key=lambda h: h[1]):
                     age = time.time() - born
-                    shade = HEART if age < 0.8 else "#B8536B"
-                    trail.append(_fg(shade) + "♥" + RESET)
+                    trail.append(_fg(HEART if age < 0.8 else "#B8536B") + "♥" + RESET)
                 if trail and left + WIDTH + 1 + len(trail) * 2 < cols:
-                    top_line += " " + " ".join(trail)
+                    lines[0] += " " + " ".join(trail)
             if self.mood == "sleep":
-                bottom_line += _fg("#7A6A5A") + " z" + RESET
-            return top_line, bottom_line
+                lines[0] += _fg("#7A6A5A") + "  z" + RESET
+            return lines
         finally:
             self.seconds += time.perf_counter() - started
 
