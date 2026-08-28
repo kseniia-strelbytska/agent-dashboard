@@ -112,6 +112,7 @@ INK = {
     "L": "#F8CE97",      # belly
     "e": "#1B0D04",      # eye
     "n": "#C96A4E",      # muzzle when asleep
+    "d": "#8FD3F4",      # the sweat drop, when there are too many sessions
     "^": "#1B0D04",      # closed happy eye
 }
 HEART = "#FF6B8B"
@@ -132,16 +133,26 @@ def _bg(hex_value: str) -> str:
 RESET = ESC + "0m"
 
 
-def _pixels(frame: str, facing: int) -> List[str]:
-    rows = FRAMES[frame]
+# Where the drop sits: just behind the head, in the two transparent cells above
+# the shoulder. Overlaid before mirroring, so it follows the cat round.
+DROP_COL = 8
+DROP_ROWS = (0, 1)
+
+
+def _pixels(frame: str, facing: int, worried: bool = False) -> List[str]:
+    rows = list(FRAMES[frame])
+    if worried:
+        for r in DROP_ROWS:
+            if rows[r][DROP_COL] == ".":
+                rows[r] = rows[r][:DROP_COL] + "d" + rows[r][DROP_COL + 1:]
     if facing < 0:
         rows = [r[::-1] for r in rows]
     return rows
 
 
-def render(frame: str, facing: int) -> List[str]:
-    """Three terminal rows of styled text, no padding, transparent background."""
-    rows = _pixels(frame, facing)
+def render(frame: str, facing: int, worried: bool = False) -> List[str]:
+    """Five terminal rows of styled text, no padding, transparent background."""
+    rows = _pixels(frame, facing, worried)
     out = []
     for pair in ((0, 1), (2, 3), (4, 5), (6, 7), (8, 9)):
         top_row, bottom_row = rows[pair[0]], rows[pair[1]]
@@ -168,6 +179,10 @@ REVERSALS_WINDOW = 2 * 3600
 REVERSALS_SLEEPY = 4
 # Sit beside a session once it is this far into its hour, before it goes red.
 EARLY_WARNING_FRACTION = 0.75
+# Session count already drives the cat's pace. Past this many it also shows on
+# its face, which is the same signal in a register you can read at a glance
+# rather than only in peripheral motion. It is not a fourth behaviour.
+WORRIED_SESSIONS = 5
 
 
 class Cat:
@@ -183,6 +198,7 @@ class Cat:
         self._last_pet = 0.0
         self._flip = False
         self._pause_until = 0.0
+        self.worried = False
         self.seconds = 0.0                    # total time spent being a cat
         self.frozen = False
 
@@ -273,6 +289,14 @@ class Cat:
                 self.mood = mood
                 changed = True
 
+            # Not while asleep or being petted: a sleeping cat with a sweat
+            # drop, or a purring one, muddles both signals at once.
+            worried = (len(ordered) >= WORRIED_SESSIONS
+                       and mood not in ("sleep", "happy"))
+            if worried != self.worried:
+                self.worried = worried
+                changed = True
+
             limit = float(max(1, cols - WIDTH - 2))
             # A sleepy cat still settles beside whoever is closest to going red:
             # two signals in one behaviour rather than a fourth to learn.
@@ -348,7 +372,7 @@ class Cat:
         """
         started = time.perf_counter()
         try:
-            rows = render(self.frame, self.facing)
+            rows = render(self.frame, self.facing, self.worried)
             left = int(self.x)
             lines = [" " * left + r for r in rows]
             if self.hearts:

@@ -125,6 +125,34 @@ def main():
     check(six < two, "six sessions trot faster than two (%.2fs vs %.2fs)" % (six, two))
     check(c._pace(40) >= 1.0 / 6.0, "and it never becomes a blur")
 
+    print("it looks worried once there are too many sessions")
+    c4 = cat_module.Cat()
+    quiet = [{"blocked_since": None}] * (cat_module.WORRIED_SESSIONS - 1)
+    busy = [{"blocked_since": None}] * cat_module.WORRIED_SESSIONS
+    c4.update({"sessions": {}}, quiet, 100, d.red_after, False, "normal", now=now)
+    check(c4.worried is False, "under the threshold it is calm")
+    c4.update({"sessions": {}}, busy, 100, d.red_after, False, "normal", now=now + 1)
+    check(c4.worried is True, "at %d sessions the drop appears" % cat_module.WORRIED_SESSIONS)
+    drop_rows = cat_module._pixels("walk_a", 1, True)
+    check(any("d" in r for r in drop_rows), "and it is actually drawn")
+    check(cat_module._pixels("walk_a", 1, False) == list(cat_module.FRAMES["walk_a"]),
+          "while a calm cat is pixel-for-pixel the original")
+    check(cat_module._pixels("walk_a", -1, True)[0].index("d")
+          < cat_module.WIDTH // 2,
+          "and it follows the cat when it turns round")
+
+    print("but worry never competes with the other signals")
+    tired = {"sessions": {"a": {"started": now - 9 * 3600}}}
+    c5 = cat_module.Cat()
+    c5.update(tired, busy, 100, d.red_after, False, "normal", now=now)
+    check(c5.mood == "sleep" and c5.worried is False,
+          "a sleeping cat is not also sweating: one signal at a time")
+    c6 = cat_module.Cat()
+    c6.pet(now)
+    c6.update({"sessions": {}}, busy, 100, d.red_after, False, "normal", now=now)
+    check(c6.mood == "happy" and c6.worried is False,
+          "and petting still buys a moment where nothing is being signalled")
+
     print("it gets sleepy for reasons that are real")
     fresh = {"sessions": {"a": {"started": now - 60}}}
     old = {"sessions": {"a": {"started": now - 9 * 3600}}}

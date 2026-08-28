@@ -230,12 +230,16 @@ Beyond that it carries three things that are true but graceless to say in words:
   strip, a soft early warning that costs nothing to ignore;
 - its **pace tracks how many sessions are open**, ambling at two and trotting at
   six, so you read your own fragmentation in peripheral vision without a number
-  appearing anywhere;
+  appearing anywhere — and past five it also **looks worried**, a sweat drop
+  behind its ear, which is the same signal in a register you can read at a
+  glance rather than only in motion;
 - it **gets sleepy** late at night, after a long day, or when work is being sent
   back to sessions repeatedly.
 
-There is deliberately no fourth behaviour. Each one added makes the others
-harder to read.
+There is deliberately no fourth *signal*. The worried face is not one: it is the
+session count again, which the pace already carries. And worry never runs at the
+same time as sleepiness or petting — a sleeping cat that is also sweating says
+two things at once and therefore neither.
 
 **Petting it is the only interaction in this tool with no consequence.** Every
 other key is a decision, an approval, a commitment. Hovering the cat sends
