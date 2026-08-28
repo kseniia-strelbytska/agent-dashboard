@@ -52,6 +52,21 @@ print(json.dumps({
     "backup_exists": settings.with_suffix(".json.agentdash-backup").exists(),
 }))
 
+# a directory inside AutoLaunch makes iTerm2 pop "Cannot Run Script ... is
+# malformed" on every launch, so nothing of ours may ever live there
+legacy = installer.LEGACY_DISABLED_DIR
+legacy.mkdir(parents=True, exist_ok=True)
+(legacy / "someones-script.py").write_text("# theirs\n")
+rescued = installer.migrate_legacy_disabled()
+print(json.dumps({
+    "rescued": rescued,
+    "legacy_gone": not legacy.exists(),
+    "landed_outside_autolaunch": (installer.DISABLED_DIR / "someones-script.py").exists(),
+    "disabled_dir_outside": installer.AUTOLAUNCH_DIR not in installer.DISABLED_DIR.parents,
+    "autolaunch_has_no_dirs": not any(
+        p.is_dir() for p in installer.AUTOLAUNCH_DIR.iterdir()) if installer.AUTOLAUNCH_DIR.exists() else True,
+}))
+
 installer.remove_hooks()
 installer._remove_block(memory, installer.MD_BEGIN, installer.MD_END)
 installer._remove_block(zshrc, installer.BEGIN, installer.END)
@@ -86,7 +101,7 @@ def main():
             print(proc.stdout)
             print(proc.stderr)
             return 1
-        installed, removed = (json.loads(l) for l in proc.stdout.strip().splitlines())
+        installed, legacy, removed = (json.loads(l) for l in proc.stdout.strip().splitlines())
     finally:
         shutil.rmtree(home, ignore_errors=True)
 
@@ -98,6 +113,13 @@ def main():
     check(installed["zshrc_blocks"] == 1, "one managed block in .zshrc, not three")
     check(installed["memory_blocks"] == 1, "one managed block in CLAUDE.md, not three")
     check(installed["backup_exists"], "settings.json is backed up before editing")
+
+    print("legacy AutoLaunch stash (the iTerm2 'malformed script' bug)")
+    check(legacy["rescued"] == 1, "a script left in the old stash is rescued")
+    check(legacy["legacy_gone"], "the offending directory is removed from AutoLaunch")
+    check(legacy["landed_outside_autolaunch"], "it lands safely outside AutoLaunch")
+    check(legacy["disabled_dir_outside"], "the stash location is not under AutoLaunch at all")
+    check(legacy["autolaunch_has_no_dirs"], "AutoLaunch contains no directories iTerm2 could choke on")
 
     print("uninstalling")
     check(removed["hooks_left"] == 0, "every agentdash hook is removed")

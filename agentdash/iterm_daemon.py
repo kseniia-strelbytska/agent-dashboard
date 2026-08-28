@@ -24,7 +24,12 @@ import iterm2
 from . import config, state
 
 NEUTRAL = "#0B0B0D"          # the dashboard window stays out of the palette
-POLL_INTERVAL = 0.7
+# The session monitors wake us the instant a window opens or closes, so the poll
+# is only a safety net for anything they miss. It starts tight and backs off
+# while nothing changes, rather than hammering iTerm2 over IPC all day.
+POLL_MIN_INTERVAL = 0.7
+POLL_MAX_INTERVAL = 6.0
+POLL_BACKOFF = 1.5
 HEARTBEAT_INTERVAL = 5.0
 
 
@@ -79,7 +84,8 @@ class Daemon:
         data = state.read()
         return set(data.get("meta", {}).get("dashboard_iterm_sessions") or [])
 
-    async def sync(self):
+    async def sync(self) -> bool:
+        """Reconcile with iTerm2. Returns True when anything actually changed."""
         try:
             await self.app.async_refresh()
         except Exception:
@@ -107,6 +113,7 @@ class Daemon:
         colours = state.sync_windows(allocatable)
         for wid in dash_windows:
             colours[wid] = NEUTRAL
+        changed = colours != self._colours
         self._colours = colours
 
         for uuid, session in objects.items():
@@ -117,12 +124,15 @@ class Daemon:
                 continue
             await self._paint(session, wanted)
             self._applied[uuid] = wanted
+            changed = True
         for uuid in [u for u in self._applied if u not in objects]:
             del self._applied[uuid]
+            changed = True
 
         for wid, colour in colours.items():
             if colour != NEUTRAL:
                 state.mark_painted(wid, colour)
+        return changed
 
     async def _paint(self, session, colour_hex):
         """Tint one session. LocalWriteOnlyProfile keeps the change scoped to
@@ -210,14 +220,19 @@ class Daemon:
     # -- loops ----------------------------------------------------------------
 
     async def _poll_loop(self):
+        interval = POLL_MIN_INTERVAL
         while True:
             try:
-                await self.sync()
+                changed = await self.sync()
             except Exception:
+                changed = False
                 _log("sync error:\n%s" % traceback.format_exc())
+            interval = (POLL_MIN_INTERVAL if changed
+                        else min(POLL_MAX_INTERVAL, interval * POLL_BACKOFF))
             try:
-                await asyncio.wait_for(self._wake.wait(), timeout=POLL_INTERVAL)
+                await asyncio.wait_for(self._wake.wait(), timeout=interval)
                 self._wake.clear()
+                interval = POLL_MIN_INTERVAL   # an event fired: be responsive again
             except asyncio.TimeoutError:
                 pass
 

@@ -220,6 +220,8 @@ def staleness(ranker: Dict, data: Dict, now: Optional[float] = None) -> Optional
     now = now or time.time()
     if ranker.get("last_error"):
         return "ranker error: %s" % str(ranker["last_error"])[:60]
+    if ranker.get("budget_note"):
+        return str(ranker["budget_note"])
     if not ranker.get("session_id"):
         return None
     turns = ranker.get("turns", 0)
@@ -295,6 +297,30 @@ def apply_heuristic() -> None:
     state.update(mutate)
 
 
+def budget_state(ranker: Dict, cfg: Dict, now: float) -> Tuple[bool, Optional[str]]:
+    """(may_call_model, why_not). Keeps the worst case bounded and visible."""
+    min_gap = float(cfg.get("rank_min_interval_seconds", config.RANK_MIN_INTERVAL_SECONDS))
+    max_hour = int(cfg.get("rank_max_per_hour", config.RANK_MAX_PER_HOUR))
+    last = ranker.get("last_call") or 0
+    if now - last < min_gap:
+        return False, "rate limited (%ds between ranks)" % int(min_gap)
+    recent = [t for t in (ranker.get("recent_calls") or []) if now - t < 3600]
+    if len(recent) >= max_hour:
+        return False, "hourly rank budget spent (%d/h) - using heuristic order" % max_hour
+    return True, None
+
+
+def _record_call(now: float) -> None:
+    def mutate(data):
+        r = data["ranker"]
+        r["last_call"] = now
+        recent = [t for t in (r.get("recent_calls") or []) if now - t < 3600]
+        recent.append(now)
+        r["recent_calls"] = recent[-200:]
+        return True
+    state.update(mutate)
+
+
 def rank_once() -> bool:
     cfg = config.load_config()
     data = state.read()
@@ -302,6 +328,13 @@ def rank_once() -> bool:
         return True
     if not cfg.get("ranking_enabled", True):
         apply_heuristic()
+        return True
+
+    allowed, why = budget_state(data["ranker"], cfg, time.time())
+    if not allowed:
+        _log("skipping model call: %s" % why)
+        apply_heuristic()
+        state.update(lambda d: d["ranker"].update(budget_note=why) or True)
         return True
 
     now = time.time()
@@ -313,6 +346,7 @@ def rank_once() -> bool:
 
     prompt, sessions = build_payload(data)
     rev_at_call = data["meta"].get("content_rev", 0)
+    _record_call(now)
     parsed, meta = _invoke(prompt, ranker, cfg.get("ranker_model", config.RANKER_MODEL))
 
     if parsed is None:
@@ -344,6 +378,7 @@ def rank_once() -> bool:
         r["last_rank_rev"] = rev_at_call
         r["cost_usd"] = round(float(r.get("cost_usd") or 0.0) + meta.get("cost", 0.0), 4)
         r["ranks"] = int(r.get("ranks") or 0) + 1
+        r["budget_note"] = None
         return True
 
     state.update(mutate)
@@ -381,7 +416,14 @@ def run_worker() -> int:
     try:
         debounce = float(config.load_config().get("rank_debounce_seconds",
                                                   config.RANK_DEBOUNCE_SECONDS))
+        rounds = 0
         while True:
+            rounds += 1
+            if rounds > config.RANK_MAX_CONSECUTIVE:
+                # Hand off rather than loop forever: the next report spawns a
+                # fresh worker, and this process stops holding resources.
+                _log("worker retiring after %d rounds" % (rounds - 1))
+                return 0
             requested = _requested_at()
             if not requested:
                 return 0
@@ -408,8 +450,33 @@ def run_worker() -> int:
             os.close(fd)
 
 
+def worker_running() -> bool:
+    """True when a debounce worker already holds the lock."""
+    import fcntl
+    try:
+        fd = os.open(str(config.RANK_LOCK), os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
 def spawn_worker() -> None:
-    """Fire-and-forget the debounce worker; returns immediately."""
+    """Fire-and-forget the debounce worker; returns immediately.
+
+    Hooks fire on every prompt, notification and stop across every session, so
+    without this check a busy machine would spawn a herd of short-lived Python
+    processes that all immediately lose the same lock.
+    """
+    if worker_running():
+        return
     try:
         subprocess.Popen(
             [sys.executable, "-m", "agentdash", "rank-worker"],
