@@ -92,9 +92,6 @@ def submit(session_id: str, status: str, tag: Optional[str], summary: Optional[s
         "summary": summary,
         "ranker_context": ranker_context,
         "cwd": cwd or os.getcwd(),
-        "window_id": window_id,
-        "color": colour,
-        "iterm_session": iterm_uuid,
         "last_report": now,
         "self_reported": self_reported,
     }
@@ -121,6 +118,7 @@ def submit(session_id: str, status: str, tag: Optional[str], summary: Optional[s
             rec["name"] = names.unique(label, others)
             rec["name_generated"] = False
         rec.update({k: v for k, v in fields.items() if v is not None})
+        state.apply_binding(data, rec, iterm_uuid, window_id, colour)
         rec["last_seen"] = now
         rec["action_needed"] = action
         rec["reports"] = rec.get("reports", 0) + (1 if self_reported else 0)
@@ -131,8 +129,6 @@ def submit(session_id: str, status: str, tag: Optional[str], summary: Optional[s
                 rec["blocked_since"] = now
         else:
             rec["blocked_since"] = None
-        if window_id and window_id in data["windows"]:
-            rec["color"] = data["windows"][window_id]["color"]
         captured.update(rec)
         state.bump_content(data)
         return True
