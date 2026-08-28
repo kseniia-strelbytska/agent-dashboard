@@ -23,7 +23,7 @@ import tty
 import unicodedata
 from typing import Dict, List, Optional, Tuple
 
-from . import config, palette, ranker, state
+from . import config, palette, pressure, ranker, state
 
 ESC = "\x1b"
 CSI = ESC + "["
@@ -254,7 +254,18 @@ class Dashboard:
         if rk.get("retired"):
             bits.append("%d refresh%s" % (rk["retired"], "" if rk["retired"] == 1 else "es"))
         left = " " + " · ".join(bits)
+        mem = pressure.read()
+        deferred, why = pressure.should_defer(self.cfg, mem)
+        shown_left = False
+        if deferred or mem.get("level") in (pressure.WARNING, pressure.CRITICAL):
+            bits.append(pressure.describe(mem))
+            left = " " + " · ".join(bits)
+            shown_left = True
+
         warn = ranker.staleness(rk, data, now)
+        if deferred:
+            # The pressure itself is already on the left; do not say it twice.
+            warn = "ranking paused" if shown_left else why
         if not data["meta"].get("daemon_heartbeat") or \
                 now - (data["meta"].get("daemon_heartbeat") or 0) > 30:
             warn = "iTerm2 daemon not responding - window colours are frozen"

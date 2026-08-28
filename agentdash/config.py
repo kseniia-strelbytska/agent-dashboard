@@ -6,7 +6,7 @@ so that uninstalling is a single `rm -rf` plus the config-file edits install.sh 
 import os
 from pathlib import Path
 
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 STATE_VERSION = 3
 
 
@@ -60,6 +60,11 @@ RANK_MIN_INTERVAL_SECONDS = 20     # never two model calls closer than this
 RANK_MAX_PER_HOUR = 60             # rolling ceiling; heuristic ordering beyond it
 RANK_MAX_CONSECUTIVE = 40          # a single worker will not loop past this
 
+# Stand down entirely while the machine itself is short of memory. A slightly
+# stale ordering is a far better contribution to the user's day than another
+# large Node process on a Mac that is already swapping.
+MIN_AVAILABLE_PERCENT = 12
+
 # A session that has not been seen for this long is presumed dead and reaped.
 SESSION_REAP_SECONDS = 8 * 3600
 # How long the shell blocks waiting for the daemon to hand out a window colour.
@@ -74,6 +79,8 @@ DEFAULTS = {
     "tint_background": True,
     "rank_min_interval_seconds": RANK_MIN_INTERVAL_SECONDS,
     "rank_max_per_hour": RANK_MAX_PER_HOUR,
+    "defer_under_memory_pressure": True,
+    "min_available_percent": MIN_AVAILABLE_PERCENT,
 }
 
 
