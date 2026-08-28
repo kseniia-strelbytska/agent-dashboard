@@ -4,10 +4,13 @@ Design notes
 ------------
 * By default only the top few rows render in full. Everything else collapses to
   one dim line under a divider, so the eye lands on what actually needs a human.
-* Hovering a row reveals the four private sentences that the session wrote for
-  the ranking agent. Expansion only ever adds lines *below* the hovered row's
-  first line, so the row under the pointer never moves and hover cannot
-  oscillate.
+* Every session is numbered, and pressing that number toggles the four private
+  sentences it wrote for the ranking agent. Nothing is revealed by pointing at
+  it: mouse reporting is off by default, so text selection works normally and
+  private context never opens by accident.
+* The top strip is one number per session - tokens per minute - in that
+  session's colour and in the same order as the cards, so it is obvious at a
+  glance which agent is actually working.
 * "Since you last looked" is anchored on terminal focus reporting: the moment
   this window loses focus we stamp `last_look`, and anything reported after that
   gets a NEW marker until you look away again.
@@ -23,7 +26,7 @@ import tty
 import unicodedata
 from typing import Dict, List, Optional, Tuple
 
-from . import config, palette, pressure, ranker, state
+from . import config, palette, pressure, ranker, state, usage
 
 ESC = "\x1b"
 CSI = ESC + "["
@@ -138,9 +141,11 @@ class Dashboard:
         self.top_n = int(self.cfg.get("top_n", config.TOP_N_DEFAULT))
         self.red_after = float(self.cfg.get("blocked_red_seconds", config.BLOCKED_RED_SECONDS))
         self.show_all = False
-        self.hover_id: Optional[str] = None
-        self.hover_row: Optional[int] = None
-        self.mouse_enabled = True
+        # Opened explicitly with a number key. Never by pointing at something:
+        # revealing private context by accident is worse than a second keypress.
+        self.open_id: Optional[str] = None
+        self.index_map: Dict[int, str] = {}
+        self.mouse_enabled = False
         self.help_open = False
         self.rows, self.cols = 24, 80
         self.line_owner: Dict[int, str] = {}
@@ -233,6 +238,8 @@ class Dashboard:
         bits = ["ranker: %s" % self.cfg.get("ranker_model", config.RANKER_MODEL)]
         if rk.get("ranks"):
             bits.append("%d ranks" % rk["ranks"])
+        if rk.get("tokens"):
+            bits.append("%s tok" % usage.human(rk["tokens"]))
         if rk.get("cost_usd"):
             bits.append("$%.2f" % rk["cost_usd"])
         if rk.get("retired"):
@@ -309,6 +316,42 @@ class Dashboard:
         return (bg(chip) + fg(palette.readable_fg(chip)) + " " + label + " "
                 + RESET + bg(skin["bg"])), width_of(label) + 2
 
+    def _token_strip(self, ordered: List[Dict], lines: List[Line]):
+        """One number per session, in its own colour, on the plain terminal
+        background. Same order and same numbering as the cards below, so the
+        strip, the rows and the number keys all agree."""
+        if not ordered:
+            return
+        label = " tok/min "
+        cells = []
+        for i, rec in enumerate(ordered, start=1):
+            colour = palette.lighten(rec.get("color") or "#666666", 2.4)
+            rate = rec.get("tokens_per_min")
+            if rec.get("container") and not rec.get("transcript_path"):
+                text = "%d %s" % (i, "n/a")          # no transcript to meter
+            elif rate is None:
+                text = "%d %s" % (i, "-")
+            else:
+                text = "%d %s" % (i, usage.human(rate, "/m"))
+            cells.append((text, colour))
+
+        room = self.cols - width_of(label) - 1
+        shown, used = [], 0
+        for text, colour in cells:
+            need = width_of(text) + (2 if shown else 0)
+            if used + need > room:
+                break
+            shown.append((text, colour, need - width_of(text)))
+            used += need
+        out = [DIM + fg(FAINT) + label + RESET]
+        for text, colour, gap in shown:
+            out.append(" " * gap + fg(colour) + BOLD + text + RESET)
+        hidden = len(cells) - len(shown)
+        if hidden and used + 6 <= room:
+            out.append(DIM + fg(GREY) + "  +%d" % hidden + RESET)
+        lines.append(Line("".join(out)))
+        lines.append(Line(""))
+
     def _full_row(self, rec: Dict, index: int, data: Dict, lines: List[Line], now: float):
         sid = rec["id"]
         colour = rec.get("color") or "#555555"
@@ -371,7 +414,7 @@ class Dashboard:
                          (fg(skin["faint"]) + meta + RESET + bg(skin["bg"]), width_of(meta))],
                         skin, sid, lines)
 
-        if self.hover_id == sid:
+        if self.open_id == sid:
             self._private_block(rec, indent, body_width, skin, lines, sid)
         lines.append(Line("", sid))
 
@@ -394,7 +437,7 @@ class Dashboard:
         for text in wrap(ctx, max(8, body_width - 2)):
             bar(ITALIC + fg(skin["muted"]) + text + RESET + bg(skin["bg"]), width_of(text))
 
-    def _collapsed_row(self, rec: Dict, data: Dict, lines: List[Line], now: float):
+    def _collapsed_row(self, rec: Dict, index: int, data: Dict, lines: List[Line], now: float):
         sid = rec["id"]
         colour = rec.get("color") or "#555555"
         skin = self._row_palette(colour, dim=True)
@@ -405,12 +448,14 @@ class Dashboard:
         overdue = rec.get("blocked_since") and (now - rec["blocked_since"]) >= self.red_after
         new = (rec.get("last_report") or 0) > (data["meta"].get("last_look") or 0)
 
-        budget = self.cols - 4 - width_of(waited) - (4 if new else 0)
+        prefix = " %d " % index if index < 10 else "%d " % index
+        budget = self.cols - 4 - width_of(prefix) - width_of(waited) - (4 if new else 0)
         name_col = max(6, min(24, budget // 2))
         tag_col = max(0, min(15, budget - name_col - 1))
 
         segs: List[Tuple[str, int]] = [
-            (bg(skin["bg"]) + "   ", 3),
+            (bg(skin["bg"]) + fg(skin["faint"]) + prefix + RESET + bg(skin["bg"]),
+             width_of(prefix)),
             (fg(skin["ink"] if new else skin["muted"])
              + truncate(name, name_col).ljust(name_col) + RESET + bg(skin["bg"]), name_col),
         ]
@@ -431,7 +476,7 @@ class Dashboard:
                          2 + width_of(clipped)))
         self._paint_row(segs, skin, sid, lines)
 
-        if self.hover_id == sid:
+        if self.open_id == sid:
             indent = "     "
             body_width = max(20, self.cols - len(indent) - 1)
             for text in wrap(summary, body_width):
@@ -452,12 +497,12 @@ class Dashboard:
     # Hints in priority order, each with a long and a short label. The footer
     # keeps as many as fit and drops the rest rather than wrapping or spilling.
     HINTS = (
-        ("hover", "private context", "private"),
-        ("click", "jump to window", "jump"),
+        ("1-9", "open context", "context"),
+        ("o", "jump to window", "jump"),
         ("q", "quit", "quit"),
         ("a", "all/fold", "all"),
         ("r", "rerank", "rerank"),
-        ("m", "mouse off (to select text)", "mouse"),
+        ("m", "mouse", "mouse"),
         ("+/-", "rows", "rows"),
         ("?", "help", "help"),
     )
@@ -488,14 +533,18 @@ class Dashboard:
             "  Rows are ordered by a Claude ranking agent that also reads four",
             "  private sentences per session which you only see on hover.",
             "",
-            "  hover      reveal a session's ranker-only context",
-            "  click      bring that session's iTerm2 window to the front",
+            "  1 - 9      open or close that session's ranker-only context",
+            "  o          bring the top session's iTerm2 window to the front",
+            "  m          mouse reporting: off by default so you can select text",
             "  a          show every session in full / return to the fold",
             "  + / -      change how many rows stay expanded",
             "  r          force a rerank now (costs one model call)",
-            "  m          toggle mouse reporting; turn it off to select text",
             "  o          open the highest-priority session's window",
             "  q          quit the dashboard",
+            "",
+            "  The top strip is tokens per minute per session, same order,",
+            "  same colours. It excludes cache reads, so a session re-reading a",
+            "  large context does not look busy while producing nothing.",
             "",
             "  Colours match the iTerm2 window each session runs in.",
             "  A waited-time turns red past one hour.",
@@ -528,6 +577,13 @@ class Dashboard:
         top = ordered if self.show_all else (action[:self.top_n] or ordered[:1])
         rest = [r for r in ordered if r not in top]
 
+        # One numbering across the strip, the cards and the number keys.
+        numbered = top + rest
+        self.index_map = {i: r["id"] for i, r in enumerate(numbered, start=1)}
+        if self.open_id not in {r["id"] for r in ordered}:
+            self.open_id = None
+        self._token_strip(numbered, lines)
+
         if not action:
             lines.append(Line("   " + fg("#5AA469") + "Nothing needs you right now." + RESET
                               + DIM + fg(GREY) + truncate("  Showing the busiest session.",
@@ -538,13 +594,14 @@ class Dashboard:
             self._full_row(rec, i, data, lines, now)
 
         if rest:
+            offset = len(top)
             waiting = len([r for r in rest if r.get("action_needed")])
             label = "%d more" % len(rest)
             if waiting:
                 label += " · %d also waiting" % waiting
             self._divider(label, lines)
-            for rec in rest:
-                self._collapsed_row(rec, data, lines, now)
+            for i, rec in enumerate(rest, start=offset + 1):
+                self._collapsed_row(rec, i, data, lines, now)
 
         lines.append(Line(""))
         self._footer(lines)
@@ -570,20 +627,15 @@ class Dashboard:
     # -- input -----------------------------------------------------------------
 
     def _handle_mouse(self, button: int, col: int, row: int, pressed: str) -> bool:
-        if button & 64:                      # wheel: not ours, and never hover
+        """Mouse reporting is off unless asked for, and even then only a
+        deliberate click does anything. Motion is ignored outright."""
+        if button & 64 or button & 32:          # wheel, or motion
             return False
-        owner = self.line_owner.get(row)
-        motion = bool(button & 32)
-        if not motion and pressed == "M" and (button & 3) == 0:
-            # A left click on a row jumps to that session's iTerm2 window.
+        if pressed == "M" and (button & 3) == 0:
+            owner = self.line_owner.get(row)
             if owner:
-                self.hover_id = owner
                 self._focus_session(owner)
-            return True
-        if owner != self.hover_id:
-            self.hover_id = owner
-            self.hover_row = row
-            return True
+                return True
         return False
 
     def _note(self, text: str, seconds: float = 3.0):
@@ -593,6 +645,14 @@ class Dashboard:
     def _handle_key(self, key: str) -> bool:
         if key in ("q", "Q", "\x03", "\x04"):
             raise KeyboardInterrupt
+        if key.isdigit():
+            index = 10 if key == "0" else int(key)
+            sid = self.index_map.get(index)
+            if sid:
+                self.open_id = None if self.open_id == sid else sid
+            else:
+                self._note("no session %d" % index)
+            return True
         if key in ("a", "A"):
             self.show_all = not self.show_all
             return True
@@ -612,9 +672,8 @@ class Dashboard:
         if key in ("m", "M"):
             self.mouse_enabled = not self.mouse_enabled
             self._write(MOUSE_ON if self.mouse_enabled else MOUSE_OFF)
-            if not self.mouse_enabled:
-                self.hover_id = None
-            self._note("mouse reporting %s" % ("on" if self.mouse_enabled else "off - select text freely"))
+            self._note("mouse %s" % ("on - click a row to jump to its window"
+                                     if self.mouse_enabled else "off - select text freely"))
             return True
         if key in ("?", "h", "H"):
             self.help_open = not self.help_open

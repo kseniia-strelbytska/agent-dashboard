@@ -21,7 +21,7 @@ import traceback
 
 import iterm2
 
-from . import bridge, config, state
+from . import bridge, config, state, usage
 
 NEUTRAL = "#0B0B0D"          # the dashboard window stays out of the palette
 # The session monitors wake us the instant a window opens or closes, so the poll
@@ -273,6 +273,8 @@ class Daemon:
                 state.update(mutate)
                 state.reap()
                 bridge.ingest()
+                usage.meter_all()
+                usage.decay()
             except Exception:
                 _log("heartbeat error:\n%s" % traceback.format_exc())
             await asyncio.sleep(HEARTBEAT_INTERVAL)

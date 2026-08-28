@@ -119,6 +119,8 @@ def _base_fields(payload: Dict) -> Dict:
     fields = {
         "cwd": cwd,
         "repo": report.repo_label(cwd),
+        # Claude Code hands us the transcript; that is where token usage lives.
+        "transcript_path": payload.get("transcript_path") or None,
         # binding is applied separately, under the "one session, one window"
         # rule in state.apply_binding
         "_binding": (iterm_uuid, window_id, colour),

@@ -34,8 +34,13 @@ judge urgency honestly.
  ●  mossy-vole        web search     —   Comparing three approaches to mouse reporting.
 ```
 
-Hover any row to reveal the private context that session wrote for the ranking
-agent.
+Every session is numbered. Press its number to open the private context it
+wrote for the ranking agent, and again to close it. Nothing opens by pointing at
+it: mouse reporting is off by default, so text selection works normally.
+
+The top strip is one number per session - tokens per minute - in that session's
+colour and in the same order as the cards, so it is obvious at a glance which
+agent is actually working.
 
 ## Install
 
@@ -119,6 +124,17 @@ skip spawning a worker when one is already running, so a busy machine does not
 get a herd of short-lived processes. The window daemon backs its poll off while
 nothing changes, and the dashboard re-parses state only when the file has
 actually moved. Measured idle cost of the daemon: about 25 MB and 0.1% CPU.
+
+**Token metering.** Every assistant record in a session's transcript carries a
+`usage` block, and the hooks hand us the transcript path, so the tool meters a
+session without the session doing anything. Only newly appended bytes are
+parsed - a byte offset is kept per session - and a partially written line is
+left for the next pass. The headline number is tokens per minute over a rolling
+ten-minute window, **excluding cache reads**: a session re-reading a 200k
+context every turn would otherwise look busy while producing nothing. An idle
+session decays to zero instead of freezing at its last value. The ranking
+agent's own token total is shown in the header, so switching it to `haiku` is
+an informed decision rather than a guess.
 
 **Standing down.** The tool reads the kernel's own memory-pressure level
 (`kern.memorystatus_vm_pressure_level`) and free-memory percentage before every
@@ -210,13 +226,12 @@ sticks.
 
 | Key | Does |
 | --- | --- |
-| hover | reveal a session's ranker-only context |
+| `1`-`9` | open or close that session's ranker-only context |
 | `a` | show every session in full / return to the fold |
 | `+` `-` | change how many rows stay expanded |
 | `r` | force a rerank now (costs one model call) |
 | `o` | bring the top session's iTerm2 window to the front |
-| click | bring that session's iTerm2 window to the front |
-| `m` | toggle mouse reporting — turn it off to select text with the mouse |
+| `m` | mouse reporting, off by default; on, a click jumps to that window |
 | `?` | help |
 | `q` | quit |
 
@@ -253,6 +268,7 @@ python3 tests/test_input.py      # SGR mouse decoding, focus reporting, keys
 python3 tests/test_limits.py     # rank budget, worker herd control
 python3 tests/test_pressure.py   # standing down under memory pressure
 python3 tests/test_retrofit.py   # handing instructions to sessions that lack them
+python3 tests/test_usage.py      # token metering from real transcript files
 python3 tests/test_bridge.py     # containerised sessions, offline (no docker needed)
 python3 tests/test_flow.py       # windows, colours, reports, hooks, reaping
 python3 tests/render_demo.py 100 # render a synthetic roster; --hover --all --stale --empty
