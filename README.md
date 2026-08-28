@@ -3,9 +3,11 @@
 A live monitor for concurrent Claude Code sessions, built for iTerm2 on macOS.
 
 Every iTerm2 window gets its own colour. Every Claude session running in one of
-those windows gets a row on a dashboard, in that colour, with a short name, a
-tag for the kind of work it last did, and three sentences on what changed since
-you last looked. Only the two or three sessions that actually need you are shown
+those windows gets a row on the dashboard, painted as a filled rectangle in that
+window's colour, so the dashboard reads as a stack of cards matching the windows
+on your screen. Each carries a name describing what that session is actually
+doing, a tag for the kind of work it last did, and three sentences on what
+changed since you last looked. Only the two or three sessions that actually need you are shown
 in full; the rest collapse to one line each.
 
 The order is decided by a Claude ranking agent, which sees four extra sentences
@@ -128,13 +130,17 @@ Installed sessions do this on their own. By hand:
 
 ```sh
 agentdash report --status question \
+  --name "pool-leak-502s" \
   --tag debugging \
   --summary "Three sentences the user sees." \
   --context "Four sentences only the ranking agent sees."
 ```
 
 `--status` is one of `working`, `done`, `question`, `blocked`. Only `working`
-means nothing is needed from you. Summaries longer than three sentences (or
+means nothing is needed from you. `--name` is two or three words naming the work
+(`pool-leak-502s`, not `crisp-otter`); without one the row falls back to the
+working directory, and before a session has reported at all it gets a memorable
+generated name so the row is never nameless. Summaries longer than three sentences (or
 contexts longer than four) are clipped, with a note on stderr.
 
 ## Configuration

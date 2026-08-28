@@ -7,6 +7,7 @@ Report with:
 
 ```
 {{AGENTDASH}} report --status <working|done|question|blocked> \
+  --name "<2-3 words naming this work>" \
   --tag "<type of work>" \
   --summary "<exactly 3 sentences>" \
   --context "<exactly 4 sentences>"
@@ -42,6 +43,12 @@ broken or user-facing, whether you can keep making progress without an answer,
 how confident you are, and any history that makes this more or less urgent than
 it looks. Be blunt here — say "this can wait, I am asking out of caution" when
 that is true. Overstating urgency here makes the whole dashboard useless.
+
+**`--name` is two or three words naming what you are actually doing right now**,
+not who you are: `pool-leak-502s`, `stripe-webhook-retry`, `readme-rewrite`. It
+is what the user scans to find the session they care about, so make it specific
+to the work rather than the repo. Update it when the work moves on to something
+else. If you never supply one, the row falls back to the directory name.
 
 **`--tag` is one or two words** naming the kind of work you last did: `tests`,
 `docs`, `infra`, `implementation`, `debugging`, `exploration`, `web search`,

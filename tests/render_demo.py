@@ -16,7 +16,7 @@ from agentdash import palette, state, tui  # noqa: E402
 NOW = time.time()
 
 FIXTURE = [
-    dict(name="amber-heron", tag="debugging", status="question", action=True,
+    dict(name="pool-leak-502s", tag="debugging", status="question", action=True,
          blocked=NOW - 8100, repo="~/dev/payments-api", priority=1,
          reason="prod-facing, blocked longest",
          summary="Traced the intermittent 502s to a connection-pool leak in db/pool.go. "
@@ -26,7 +26,7 @@ FIXTURE = [
                  "of checkout requests. I cannot proceed without a decision because the "
                  "alternative fix would take another two hours. The user deferred a similar "
                  "question yesterday. Confidence in the diagnosis is high."),
-    dict(name="wry-comet", tag="tests", status="done", action=True,
+    dict(name="ranker-payload-tests", tag="tests", status="done", action=True,
          blocked=NOW - 240, repo="~/dev/agent-dashboard", priority=2,
          reason="finished, two failures left",
          summary="Added twelve test cases covering the ranking payload builder and the "
@@ -35,7 +35,7 @@ FIXTURE = [
          context="Nothing is blocked on the user here, but the two failures are trivial and "
                  "I could fix them unprompted. The branch is not merged so there is no risk "
                  "to anyone else. This can comfortably wait an hour. Low urgency."),
-    dict(name="solar-stoat", tag="infra", status="blocked", action=True,
+    dict(name="staging-rds-apply", tag="infra", status="blocked", action=True,
          blocked=NOW - 420, repo="~/ops/terraform", priority=3,
          reason="needs a credential you hold",
          summary="The staging apply is halfway through and stopped at the RDS module. "
@@ -44,15 +44,15 @@ FIXTURE = [
          context="A half-applied Terraform state is genuinely risky if left overnight. "
                  "There is no workaround available to me. Every minute here increases the "
                  "chance of drift. This should outrank anything cosmetic."),
-    dict(name="bold-finch", tag="docs", status="working", action=False,
+    dict(name="readme-install-docs", tag="docs", status="working", action=False,
          blocked=None, repo="~/dev/agent-dashboard", priority=4,
          reason="working", summary="Rewriting the README installation section.",
          context="Nothing needed. Purely cosmetic work. No deadline. Ignore."),
-    dict(name="mossy-vole", tag="web search", status="working", action=False,
+    dict(name="mouse-reporting-read", tag="web search", status="working", action=False,
          blocked=None, repo="~/research", priority=5, reason="working",
          summary="Comparing three approaches to terminal mouse reporting.",
          context="Exploratory. No decisions pending. Nothing at stake. Ignore."),
-    dict(name="iron-kite", tag="exploration", status="done", action=True,
+    dict(name="iterm2-api-survey", tag="exploration", status="done", action=True,
          blocked=NOW - 90, repo="~/dev/scratch", priority=6,
          reason="finished, low stakes",
          summary="Read through the iTerm2 Python API surface and wrote up what is possible. "

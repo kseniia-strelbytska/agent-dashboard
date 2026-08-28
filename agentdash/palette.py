@@ -102,3 +102,9 @@ def lighten(hex_value: str, factor: float) -> str:
     l = max(0.0, min(1.0, l * factor))
     nr, ng, nb = colorsys.hls_to_rgb(h, l, s)
     return rgb_to_hex((nr * 255, ng * 255, nb * 255))
+
+
+def blend(a_hex: str, b_hex: str, t: float) -> str:
+    """Mix two colours. t=0 gives a, t=1 gives b."""
+    a, b = hex_to_rgb(a_hex), hex_to_rgb(b_hex)
+    return rgb_to_hex(a[i] + (b[i] - a[i]) * t for i in range(3))

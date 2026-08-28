@@ -211,22 +211,6 @@ class Dashboard:
 
     # -- rendering -------------------------------------------------------------
 
-    def _tag_label(self, tag: Optional[str], room: int) -> str:
-        return truncate((tag or "unknown"), max(3, min(16, room)))
-
-    def _tag_block(self, label: str, colour: str) -> str:
-        tint = palette.lighten(colour or "#333333", 2.1)
-        return bg(tint) + fg(palette.readable_fg(tint)) + " " + label + " " + RESET
-
-    def _blocked_cell(self, rec: Dict, now: float) -> Tuple[str, int]:
-        if not rec.get("blocked_since"):
-            return DIM + fg(GREY) + "running" + RESET, len("running")
-        waited = now - rec["blocked_since"]
-        text = "waited " + fmt_duration(waited)
-        colour = RED if waited >= self.red_after else AMBER
-        style = (BOLD + fg(colour)) if waited >= self.red_after else fg(colour)
-        return style + text + RESET, width_of(text)
-
     def _header(self, data: Dict, lines: List[Line], now: float):
         sessions = list(data["sessions"].values())
         needing = [s for s in sessions if s.get("action_needed")]
@@ -284,110 +268,177 @@ class Dashboard:
             lines.append(Line(DIM + fg(FAINT) + truncate(left, self.cols - 1) + RESET))
         lines.append(Line(""))
 
+    # -- coloured row blocks ---------------------------------------------------
+    #
+    # Each session's row is painted as a filled rectangle in the colour of the
+    # iTerm2 window it runs in, so the dashboard reads as a stack of cards that
+    # match the windows on screen. Every line of a row is padded to the full
+    # terminal width, and the blank line between rows is left unpainted so the
+    # cards separate cleanly.
+
+    def _row_palette(self, colour: str, dim: bool = False) -> Dict[str, str]:
+        ground = palette.lighten(colour, 0.80) if dim else colour
+        ink = palette.readable_fg(ground)
+        return {
+            "bg": ground,
+            "ink": ink,
+            "muted": palette.blend(ink, ground, 0.42),
+            "faint": palette.blend(ink, ground, 0.62),
+            "chip": palette.lighten(colour, 2.1 if not dim else 1.7),
+        }
+
+    def _paint_row(self, segments: List[Tuple[str, int]], skin: Dict,
+                   sid: str, lines: List[Line]) -> None:
+        """Join pre-measured segments and pad the line out to the full width."""
+        used = sum(w for _, w in segments)
+        body = "".join(text for text, _ in segments)
+        pad = max(0, self.cols - used)
+        lines.append(Line(bg(skin["bg"]) + body + " " * pad + RESET, sid))
+
+    def _waited_segment(self, rec: Dict, skin: Dict, now: float) -> Tuple[str, int]:
+        if not rec.get("blocked_since"):
+            return fg(skin["faint"]) + "running" + RESET + bg(skin["bg"]), 7
+        waited = now - rec["blocked_since"]
+        text = "waited " + fmt_duration(waited)
+        late = waited >= self.red_after
+        style = (BOLD + fg(RED)) if late else fg(AMBER)
+        return style + text + RESET + bg(skin["bg"]), width_of(text)
+
+    def _chip(self, label: str, skin: Dict) -> Tuple[str, int]:
+        chip = skin["chip"]
+        return (bg(chip) + fg(palette.readable_fg(chip)) + " " + label + " "
+                + RESET + bg(skin["bg"])), width_of(label) + 2
+
     def _full_row(self, rec: Dict, index: int, data: Dict, lines: List[Line], now: float):
         sid = rec["id"]
         colour = rec.get("color") or "#555555"
-        indent = "     "
+        skin = self._row_palette(colour)
         name = rec.get("name") or "?"
-        marker = "●"
         new = (rec.get("last_report") or 0) > (data["meta"].get("last_look") or 0)
-
-        blocked_txt, blocked_w = self._blocked_cell(rec, now)
-
-        # Fit the row by dropping the least important decorations first, then
-        # shrinking the name, rather than letting anything spill past `cols`.
-        prefix_w = 1 + len(str(index)) + 2 + 1 + 1     # " N  ● "
         no_report = not rec.get("self_reported", True)
+
+        waited_txt, waited_w = self._waited_segment(rec, skin, now)
+
+        # Fit by dropping the least important decorations first, then shrinking
+        # the name, rather than letting anything spill past `cols`.
+        prefix_w = 1 + len(str(index)) + 2
         for want_note, want_new, want_tag in ((True, True, True), (False, True, True),
                                               (False, False, True), (False, False, False)):
             note_w = 12 if (no_report and want_note) else 0
             new_w = 4 if (new and want_new) else 0
-            fixed = prefix_w + note_w + new_w + blocked_w + 1
+            fixed = prefix_w + note_w + new_w + waited_w + 1
             tag_room = self.cols - fixed - width_of(name) - 3
-            tag_label = self._tag_label(rec.get("tag"), tag_room) if (want_tag and tag_room >= 5) else ""
+            tag_label = (truncate(rec.get("tag") or "unknown", max(3, min(16, tag_room)))
+                         if (want_tag and tag_room >= 5) else "")
             tag_w = (width_of(tag_label) + 2) if tag_label else 0
             name_budget = self.cols - fixed - tag_w - 1
             if name_budget >= 6 or not want_tag:
                 shown = truncate(name, max(3, name_budget))
                 break
-        left = " %s%d%s  %s%s%s %s%s%s" % (
-            DIM + fg(FAINT), index, RESET,
-            fg(colour) + BOLD, marker, RESET,
-            BOLD + fg(TEXT), shown, RESET)
-        left_w = prefix_w + width_of(shown)
-        if no_report and want_note:
-            left += " " + DIM + fg(GREY) + "(no report)" + RESET
-            left_w += 12
-        if new and want_new:
-            left += " " + fg(AMBER) + BOLD + "NEW" + RESET
-            left_w += 4
-        tag_txt = self._tag_block(tag_label, colour) if tag_label else ""
-        gap = max(1, self.cols - left_w - blocked_w - tag_w - 1)
-        lines.append(Line(left + " " * gap + blocked_txt + (" " + tag_txt if tag_txt else ""), sid))
 
+        segs: List[Tuple[str, int]] = [
+            (bg(skin["bg"]) + fg(skin["faint"]) + " %d  " % index + RESET + bg(skin["bg"]),
+             prefix_w),
+            (BOLD + fg(skin["ink"]) + shown + RESET + bg(skin["bg"]), width_of(shown)),
+        ]
+        if no_report and want_note:
+            segs.append((fg(skin["faint"]) + " (no report)" + RESET + bg(skin["bg"]), 12))
+        if new and want_new:
+            segs.append((" " + BOLD + fg(AMBER) + "NEW" + RESET + bg(skin["bg"]), 4))
+
+        used = sum(w for _, w in segs)
+        gap = max(1, self.cols - used - waited_w - (width_of(tag_label) + 3 if tag_label else 0))
+        segs.append((" " * gap, gap))
+        segs.append((waited_txt, waited_w))
+        if tag_label:
+            segs.append((" ", 1))
+            segs.append(self._chip(tag_label, skin))
+        self._paint_row(segs, skin, sid, lines)
+
+        indent = "     "
         body_width = max(20, self.cols - len(indent) - 1)
         summary = rec.get("summary") or "No summary reported yet."
-        for line in wrap(summary, body_width):
-            lines.append(Line(indent + fg(TEXT) + line + RESET, sid))
+        for text in wrap(summary, body_width):
+            self._paint_row([(indent, len(indent)),
+                             (fg(skin["ink"]) + text + RESET + bg(skin["bg"]), width_of(text))],
+                            skin, sid, lines)
 
         meta_bits = [rec.get("repo") or rec.get("cwd") or "?"]
         if rec.get("rank_reason"):
             meta_bits.append("why: " + rec["rank_reason"])
         meta = truncate(" · ".join(meta_bits), body_width)
-        lines.append(Line(indent + DIM + fg(GREY) + meta + RESET, sid))
+        self._paint_row([(indent, len(indent)),
+                         (fg(skin["faint"]) + meta + RESET + bg(skin["bg"]), width_of(meta))],
+                        skin, sid, lines)
 
         if self.hover_id == sid:
-            self._private_block(rec, indent, body_width, lines, sid)
+            self._private_block(rec, indent, body_width, skin, lines, sid)
         lines.append(Line("", sid))
 
-    def _private_block(self, rec: Dict, indent: str, body_width: int,
+    def _private_block(self, rec: Dict, indent: str, body_width: int, skin: Dict,
                        lines: List[Line], sid: str):
-        ctx = rec.get("ranker_context")
+        rule = palette.blend(skin["ink"], skin["bg"], 0.55)
+
+        def bar(text_styled, visible):
+            self._paint_row([(indent, len(indent)),
+                             (fg(rule) + "\u2502 " + RESET + bg(skin["bg"]), 2),
+                             (text_styled, visible)], skin, sid, lines)
+
         head = "ranker-only context"
-        lines.append(Line(indent + fg(CHROME) + "│ " + RESET
-                          + DIM + ITALIC + fg(FAINT) + head + RESET, sid))
+        bar(ITALIC + fg(skin["faint"]) + head + RESET + bg(skin["bg"]), width_of(head))
+        ctx = rec.get("ranker_context")
         if not ctx:
-            lines.append(Line(indent + fg(CHROME) + "│ " + RESET
-                              + DIM + fg(GREY) + "(this session has not supplied any)" + RESET, sid))
+            miss = "(this session has not supplied any)"
+            bar(fg(skin["faint"]) + miss + RESET + bg(skin["bg"]), width_of(miss))
             return
-        for line in wrap(ctx, body_width - 2):
-            lines.append(Line(indent + fg(CHROME) + "│ " + RESET
-                              + ITALIC + fg(FAINT) + line + RESET, sid))
+        for text in wrap(ctx, max(8, body_width - 2)):
+            bar(ITALIC + fg(skin["muted"]) + text + RESET + bg(skin["bg"]), width_of(text))
 
     def _collapsed_row(self, rec: Dict, data: Dict, lines: List[Line], now: float):
         sid = rec["id"]
         colour = rec.get("color") or "#555555"
+        skin = self._row_palette(colour, dim=True)
         name = rec.get("name") or "?"
         tag = (rec.get("tag") or "-")[:14]
-        waited = fmt_duration(now - rec["blocked_since"], short=True) if rec.get("blocked_since") else "—"
+        waited = (fmt_duration(now - rec["blocked_since"], short=True)
+                  if rec.get("blocked_since") else "\u2014")
         overdue = rec.get("blocked_since") and (now - rec["blocked_since"]) >= self.red_after
         new = (rec.get("last_report") or 0) > (data["meta"].get("last_look") or 0)
 
-        # Columns shrink with the window; below a point the tag drops out first.
         budget = self.cols - 4 - width_of(waited) - (4 if new else 0)
-        name_col = max(6, min(18, budget // 2))
+        name_col = max(6, min(24, budget // 2))
         tag_col = max(0, min(15, budget - name_col - 1))
-        parts = [" " + DIM + fg(colour) + "●" + RESET + "  ",
-                 fg(TEXT if new else FAINT) + truncate(name, name_col).ljust(name_col) + RESET]
-        used = 1 + 1 + 2 + name_col
+
+        segs: List[Tuple[str, int]] = [
+            (bg(skin["bg"]) + "   ", 3),
+            (fg(skin["ink"] if new else skin["muted"])
+             + truncate(name, name_col).ljust(name_col) + RESET + bg(skin["bg"]), name_col),
+        ]
         if tag_col >= 4:
-            parts.append(DIM + fg(GREY) + truncate(tag, tag_col).ljust(tag_col) + RESET)
-            used += tag_col
-        parts.append((fg(RED) + BOLD if overdue else DIM + fg(GREY)) + waited + RESET)
-        used += width_of(waited)
+            segs.append((fg(skin["faint"]) + truncate(tag, tag_col).ljust(tag_col)
+                         + RESET + bg(skin["bg"]), tag_col))
+        style = (BOLD + fg(RED)) if overdue else fg(skin["faint"])
+        segs.append((style + waited + RESET + bg(skin["bg"]), width_of(waited)))
         if new:
-            parts.append(" " + fg(AMBER) + "NEW" + RESET)
-            used += 4
+            segs.append((" " + fg(AMBER) + "NEW" + RESET + bg(skin["bg"]), 4))
+
         summary = rec.get("summary") or ""
+        used = sum(w for _, w in segs)
         room = self.cols - used - 3
         if room > 24 and summary:
-            parts.append("  " + DIM + fg(GREY) + truncate(summary, room) + RESET)
-        lines.append(Line("".join(parts), sid))
+            clipped = truncate(summary, room)
+            segs.append(("  " + fg(skin["muted"]) + clipped + RESET + bg(skin["bg"]),
+                         2 + width_of(clipped)))
+        self._paint_row(segs, skin, sid, lines)
+
         if self.hover_id == sid:
-            body_width = max(20, self.cols - 6)
+            indent = "     "
+            body_width = max(20, self.cols - len(indent) - 1)
             for text in wrap(summary, body_width):
-                lines.append(Line("     " + fg(TEXT) + text + RESET, sid))
-            self._private_block(rec, "     ", body_width, lines, sid)
+                self._paint_row([(indent, len(indent)),
+                                 (fg(skin["ink"]) + text + RESET + bg(skin["bg"]),
+                                  width_of(text))], skin, sid, lines)
+            self._private_block(rec, indent, body_width, skin, lines, sid)
             lines.append(Line("", sid))
 
     def _divider(self, label: str, lines: List[Line]):

@@ -5,7 +5,7 @@ import sys
 import time
 from typing import List, Optional, Tuple
 
-from . import daemon_client, ranker, state
+from . import daemon_client, names, ranker, state
 
 STATUSES = ("working", "done", "question", "blocked")
 # Statuses other than `working` mean the session is waiting on the human.
@@ -67,7 +67,8 @@ def resolve_window(iterm_uuid: Optional[str]) -> Tuple[Optional[str], Optional[s
 
 def submit(session_id: str, status: str, tag: Optional[str], summary: Optional[str],
            ranker_context: Optional[str], cwd: Optional[str] = None,
-           self_reported: bool = True, quiet: bool = False) -> dict:
+           name: Optional[str] = None, self_reported: bool = True,
+           quiet: bool = False) -> dict:
     warnings = []
     if summary is not None:
         summary, warn = clip_sentences(summary, 3, "--summary")
@@ -109,10 +110,16 @@ def submit(session_id: str, status: str, tag: Optional[str], summary: Optional[s
     def mutate(data):
         sessions = data["sessions"]
         rec = sessions.get(session_id)
+        # A name that says what the session is doing beats a random animal, and
+        # the work changes, so let it be updated on any report.
+        others = [s["name"] for sid, s in sessions.items() if sid != session_id]
+        label = names.describe(name or "", fields["cwd"] or "", tag or "")
         if rec is None:
-            rec = state.new_session_record(
-                session_id, [s["name"] for s in sessions.values()])
+            rec = state.new_session_record(session_id, others)
             sessions[session_id] = rec
+        if label and label != rec.get("name"):
+            rec["name"] = names.unique(label, others)
+            rec["name_generated"] = False
         rec.update({k: v for k, v in fields.items() if v is not None})
         rec["last_seen"] = now
         rec["action_needed"] = action
