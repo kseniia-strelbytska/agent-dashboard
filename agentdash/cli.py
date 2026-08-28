@@ -12,7 +12,7 @@ import sys
 import time
 from typing import List, Optional
 
-from . import config, hooks, installer, ranker, report, state
+from . import bridge, config, hooks, installer, ranker, report, state
 
 
 def _p(text: str = "") -> None:
@@ -202,6 +202,49 @@ def cmd_uninstall(args) -> int:
     return installer.uninstall(purge=args.purge)
 
 
+def cmd_bridge(args) -> int:
+    if args.action == "list":
+        registry = bridge.load()
+        if not registry:
+            _p("no containers bridged")
+            return 0
+        for name, rec in sorted(registry.items()):
+            _p("%s  (installed %s)" % (name, _fmt_age(rec.get("installed"))))
+            for m in rec.get("mounts", []):
+                _p("    %s -> %s" % (m["source"], m["destination"]))
+        return 0
+
+    if args.action == "ingest":
+        _p("applied %d spooled record(s)" % bridge.ingest())
+        return 0
+
+    if not args.container:
+        sys.stderr.write("agentdash: a container name is required\n")
+        return 2
+
+    if args.action == "remove":
+        _p("removed" if bridge.remove(args.container) else "was not bridged")
+        return 0
+
+    try:
+        instructions = (config.HOME / "instructions.md").read_text()
+    except OSError:
+        sys.stderr.write("agentdash: run `agentdash install` first\n")
+        return 1
+    try:
+        rec = bridge.install(args.container, instructions)
+    except RuntimeError as exc:
+        sys.stderr.write("agentdash: %s\n" % exc)
+        return 1
+    _p("bridged %s" % args.container)
+    for m in rec["mounts"]:
+        _p("  spool via %s -> %s" % (m["source"], m["destination"]))
+    _p("Sessions started in that container from now on will report.")
+    _p("A session already running picks it up only if Claude Code rereads its")
+    _p("settings between turns; otherwise it appears when that session restarts.")
+    return 0
+
+
 def cmd_reset(args) -> int:
     def mutate(data):
         data["sessions"] = {}
@@ -279,6 +322,11 @@ def build_parser() -> argparse.ArgumentParser:
     uni = sub.add_parser("uninstall", help="remove all wiring")
     uni.add_argument("--purge", action="store_true", help="also delete state and logs")
     uni.set_defaults(func=cmd_uninstall)
+
+    br = sub.add_parser("bridge", help="report from Claude sessions inside containers")
+    br.add_argument("action", choices=("install", "remove", "list", "ingest"))
+    br.add_argument("container", nargs="?", help="container name or id")
+    br.set_defaults(func=cmd_bridge)
 
     sub.add_parser("reset", help="clear all sessions and the ranking session").set_defaults(func=cmd_reset)
     sub.add_parser("version", help="print the version").set_defaults(func=cmd_version)

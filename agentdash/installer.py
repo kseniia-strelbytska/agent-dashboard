@@ -196,6 +196,13 @@ def install_library(python_bin: str) -> Path:
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    # The container bridge needs the shell scripts too.
+    csrc = _repo_root() / "container"
+    if csrc.is_dir():
+        cdst = LIB_DIR / "container"
+        if cdst.exists():
+            shutil.rmtree(cdst)
+        shutil.copytree(csrc, cdst)
     return dst
 
 
