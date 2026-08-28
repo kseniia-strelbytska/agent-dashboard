@@ -658,7 +658,7 @@ class Dashboard:
         self.cat.update(
             data, numbered, self.cols, self.red_after,
             decision_open=bool(self.open_id),
-            under_pressure=pressure.should_defer(self.cfg, mem)[0],
+            pressure_level=mem.get("level", "normal"),
             targets=getattr(self, "strip_x", {}), now=now)
         first = len(lines) + 1
         for text in self.cat.draw(self.cols):
@@ -679,7 +679,7 @@ class Dashboard:
         changed = self.cat.update(
             data, numbered, self.cols, self.red_after,
             decision_open=bool(self.open_id),
-            under_pressure=pressure.should_defer(self.cfg, mem)[0],
+            pressure_level=mem.get("level", "normal"),
             targets=getattr(self, "strip_x", {}), now=now)
         if not changed:
             return

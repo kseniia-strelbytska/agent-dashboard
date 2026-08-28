@@ -44,7 +44,10 @@ def main():
     first, last = d.cat_rows
     check(first > 0 and last - first + 1 == cat_module.HEIGHT_ROWS,
           "it occupies exactly %d rows" % cat_module.HEIGHT_ROWS)
-    check(len(cat_module.FRAMES["walk_a"]) >= 6, "and is at least six pixels tall")
+    check(len(cat_module.FRAMES["walk_a"]) >= 6,
+          "and is %d pixels tall" % len(cat_module.FRAMES["walk_a"]))
+    check(all(len(r) == cat_module.WIDTH for f in cat_module.FRAMES.values() for r in f),
+          "every frame is the same width, so it cannot shear")
     card_rows = [i + 1 for i, l in enumerate(lines) if l.session_id]
     check(all(r not in card_rows for r in range(first, last + 1)),
           "no cat row belongs to any card")
@@ -75,28 +78,46 @@ def main():
     soon[0]["blocked_since"] = now - d.red_after * 0.9
     c2.x = 60.0
     for step in range(80):
-        c2.update({"sessions": {}}, soon, 100, d.red_after, False, False,
+        c2.update({"sessions": {}}, soon, 100, d.red_after, False, "normal",
                   targets={0: 12}, now=now + step)
     check(abs(c2.x - 12) < 1.0, "it arrives at the column (x=%.0f)" % c2.x)
     check(c2.mood == "sit", "and sits down there")
 
-    print("it freezes when attention is required, and when memory is short")
+    print("it freezes when attention is required, and when memory is critical")
     c = cat_module.Cat()
     c._last_step = 0
     moved = c.update(data, ordered, 100, d.red_after,
-                     decision_open=True, under_pressure=False, now=now)
+                     decision_open=True, pressure_level="normal", now=now)
     check(moved is False and c.frozen, "an expanded decision freezes it")
     moved = c.update(data, ordered, 100, d.red_after,
-                     decision_open=False, under_pressure=True, now=now)
-    check(moved is False and c.frozen, "memory pressure freezes it")
+                     decision_open=False, pressure_level="critical", now=now)
+    check(moved is False and c.frozen, "critical memory freezes it")
+    # A busy Mac sits at the kernel's warning level for hours. Freezing there
+    # would leave the cat permanently dead, which reads as broken rather than
+    # considerate - it costs a few string operations, not a Node process.
+    c2 = cat_module.Cat()
+    c2.update(data, ordered, 100, d.red_after, False, pressure_level="warning", now=now)
+    check(c2.frozen is False, "a mere warning slows it rather than stopping it")
     x_before, frame_before = c.x, c.frame
     for i in range(20):
-        c.update(data, ordered, 100, d.red_after, False, True, now=now + i)
+        c.update(data, ordered, 100, d.red_after, False, "critical", now=now + i)
     check(c.x == x_before and c.frame == frame_before,
           "and it really does not move while frozen")
     c.pet(now)
-    c.update(data, ordered, 100, d.red_after, False, True, now=now + 5)
+    c.update(data, ordered, 100, d.red_after, False, "critical", now=now + 5)
     check(c.hearts == [], "hearts still expire while frozen, rather than sticking")
+
+    print("it walks, and it is curious about it")
+    c3 = cat_module.Cat()
+    seen, xs = set(), []
+    for i in range(300):
+        c3.update({"sessions": {}}, [{"blocked_since": None}] * 3, 100, d.red_after,
+                  False, "normal", now=now + i * 0.125)
+        seen.add(c3.frame)
+        xs.append(int(c3.x))
+    check(max(xs) - min(xs) > 5, "it covers ground (%d..%d)" % (min(xs), max(xs)))
+    check("idle" in seen, "and stops to look around on the way")
+    check({"walk_a", "walk_b"} <= seen, "with both walk frames, so the legs move")
 
     print("its pace tracks how many sessions are open")
     c = cat_module.Cat()
@@ -130,7 +151,7 @@ def main():
     c = cat_module.Cat()
     start = time.perf_counter()
     for i in range(240):                       # 30 seconds at 8fps
-        c.update(data, ordered, 100, d.red_after, False, False, now=now + i * 0.125)
+        c.update(data, ordered, 100, d.red_after, False, "normal", now=now + i * 0.125)
         c.draw(100)
     elapsed = time.perf_counter() - start
     check(c.seconds < 0.5, "240 frames of cat cost %.0f ms of CPU" % (c.seconds * 1000))

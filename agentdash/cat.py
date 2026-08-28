@@ -33,44 +33,81 @@ from . import palette
 # real per-pixel colour on any of the eight card backgrounds.
 #   o rim   B body   L belly   e eye   n muzzle   ^ happy eye
 FRAMES: Dict[str, List[str]] = {
-    "walk_a": ["..........o.o.",
-               "o.......oBBBBo",
-               "oo..ooooBBeBBo",
-               ".oooBBBBBBBnBo",
-               "..oBLLLLLLBBo.",
-               "...oo.oo.oo..."],
-    "walk_b": ["..........o.o.",
-               "o.......oBBBBo",
-               "oo..ooooBBeBBo",
-               ".oooBBBBBBBnBo",
-               "..oBLLLLLLBBo.",
-               "..oo..oo..oo.."],
-    "sit":    ["..........o.o.",
-               "oo......oBBBBo",
-               "o.o..oooBBeBBo",
-               "o.oooBBBBBBnBo",
-               "o..oBLLLLLBBo.",
-               "..ooooooooooo."],
-    "sleep":  ["..............",
-               "..........o.o.",
-               "...ooooooBBBBo",
-               "..oBLLLLLLBnBo",
-               ".oBLLLLLLLLBo.",
-               "..ooooooooooo."],
-    "happy":  ["..........o.o.",
-               "o.......oBBBBo",
-               "oo..ooooBB^BBo",
-               ".oooBBBBBBBnBo",
-               "..oBLLLLLLBBo.",
-               "...oo.oo.oo..."],
+    # Standing, looking around. A cat pauses constantly; this is the pause.
+    "idle":   ["..........o..o..",
+               ".........oooooo.",
+               "..oo.....oBBBBBo",
+               ".oBBo....oBeBBeB",
+               ".oBBo....oBBnBBo",
+               ".oBBo.oooBBBBBo.",
+               "..oBBoBBBBBBBo..",
+               "...oBBLLLLLLBo..",
+               "...oBLLLLLLLBo..",
+               "....oo.oo.oo.o.."],
+    "walk_a": ["..........o..o..",
+               ".........oooooo.",
+               "...oo....oBBBBBo",
+               "..oBBo...oBeBBeB",
+               "..oBBo...oBBnBBo",
+               "...oBBoooBBBBBo.",
+               "....oBBBBBBBBo..",
+               "...oBLLLLLLLBo..",
+               "...oBLLLLLLLBo..",
+               "...oo.oo.oo..o.."],
+    "walk_b": ["..........o..o..",
+               ".........oooooo.",
+               "..oo.....oBBBBBo",
+               ".oBBo....oBeBBeB",
+               ".oBBo....oBBnBBo",
+               "..oBBo.ooBBBBBo.",
+               "...oBBBBBBBBBo..",
+               "...oBLLLLLLLBo..",
+               "...oBLLLLLLLBo..",
+               "..oo..oo..oo.o.."],
+    # Sitting up, tail wrapped round: the "something is about to need you" pose.
+    "sit":    ["..........o..o..",
+               ".........oooooo.",
+               "..oo.....oBBBBBo",
+               ".oBBo....oBeBBeB",
+               ".oBBo....oBBnBBo",
+               ".oBBo....oBBBBo.",
+               "..oBBo..oBBBBBo.",
+               "...oBBooBLLLLBo.",
+               "...oBBBBLLLLLBo.",
+               "....oooooooooo.."],
+    "sleep":  ["................",
+               "................",
+               "................",
+               "..........o..o..",
+               ".........oooooo.",
+               "..ooo....oBBBBBo",
+               ".oBBBooooBBnBBo.",
+               ".oBBBBBBBBBBBo..",
+               "..oBLLLLLLLLBo..",
+               "...ooooooooooo.."],
+    "happy":  ["..........o..o..",
+               ".........oooooo.",
+               "..oo.....oBBBBBo",
+               ".oBBo....oB^BB^B",
+               ".oBBo....oBBnBBo",
+               ".oBBo.oooBBBBBo.",
+               "..oBBoBBBBBBBo..",
+               "...oBBLLLLLLBo..",
+               "...oBLLLLLLLBo..",
+               "....oo.oo.oo.o.."],
 }
-WIDTH = 14
-HEIGHT_ROWS = 3          # terminal rows: six pixel rows, two per row
+WIDTH = 16
+HEIGHT_ROWS = 5          # ten pixel rows, two per terminal row
 
 # Orange, but with a dark rim and a pale belly: flat orange disappears against
 # the docs card, whose colour is almost the same hue.
+# The rim has two jobs that pull against each other: stay visible on the black
+# terminal background the cat's lane sits on, and stay darker than the body so
+# it still reads as an outline. #2E1608 was almost black and lost the first job
+# entirely - contrast 1.16 against the terminal. This is 3.07 against black and
+# still 2.30 against the body.
 INK = {
-    "o": "#2E1608",      # rim - reads as an outline on every background
+    "o": "#8F4E23",      # rim - visible on black, still darker than the body
     "B": "#E8802A",      # body
     "L": "#F8CE97",      # belly
     "e": "#1B0D04",      # eye
@@ -106,7 +143,7 @@ def render(frame: str, facing: int) -> List[str]:
     """Three terminal rows of styled text, no padding, transparent background."""
     rows = _pixels(frame, facing)
     out = []
-    for pair in ((0, 1), (2, 3), (4, 5)):
+    for pair in ((0, 1), (2, 3), (4, 5), (6, 7), (8, 9)):
         top_row, bottom_row = rows[pair[0]], rows[pair[1]]
         chunks = []
         for col in range(WIDTH):
@@ -145,6 +182,7 @@ class Cat:
         self._last_step = 0.0
         self._last_pet = 0.0
         self._flip = False
+        self._pause_until = 0.0
         self.seconds = 0.0                    # total time spent being a cat
         self.frozen = False
 
@@ -190,7 +228,7 @@ class Cat:
     # -- update ----------------------------------------------------------------
 
     def update(self, data: Dict, ordered: List[Dict], cols: int, red_after: float,
-               decision_open: bool, under_pressure: bool,
+               decision_open: bool, pressure_level: str = "normal",
                targets: Optional[Dict[int, int]] = None,
                now: Optional[float] = None) -> bool:
         """Advance the cat. Returns True if anything visible changed."""
@@ -206,11 +244,18 @@ class Cat:
                 self.hearts = [h for h in self.hearts if now - h[1] < 1.6]
                 changed = len(self.hearts) != before
 
-            # Rule one: yield. Nothing moves while a decision is expanded, and
-            # nothing moves at all when the machine is short of memory.
-            self.frozen = decision_open or under_pressure
+            # Rule one: yield. Nothing moves while a decision is expanded.
+            #
+            # Memory is a matter of degree. The ranker stands down at the
+            # kernel's *warning* level because it spawns a large process; the
+            # cat costs a few string operations, and freezing it at warning
+            # means it is frozen almost permanently on a busy machine, which
+            # reads as broken rather than considerate. So it slows at warning
+            # and stops dead at critical.
+            self.frozen = decision_open or pressure_level == "critical"
             if self.frozen:
                 return changed
+            drag = 2.0 if pressure_level == "warning" else 1.0
 
             petted = now - self._last_pet < 1.4
             sleepy = self._sleepy(data, now)
@@ -236,7 +281,7 @@ class Cat:
             if mood in ("sit", "sleep") and target is not None:
                 goal = float(min(max(1, target), int(limit)))
                 if abs(self.x - goal) > 0.5:
-                    if now - self._last_step >= self._pace(len(ordered)):
+                    if now - self._last_step >= self._pace(len(ordered)) * drag:
                         self._last_step = now
                         step = 1.0 if goal > self.x else -1.0
                         self.facing = 1 if step > 0 else -1
@@ -248,8 +293,21 @@ class Cat:
                 self.x = goal
 
             if mood == "walk":
-                if now - self._last_step >= self._pace(len(ordered)):
+                # Curiosity: a cat crossing a room stops, looks around, and
+                # sometimes turns back. Without this it is a sprite on rails.
+                if now < self._pause_until:
+                    if self.frame != "idle":
+                        self.frame = "idle"
+                        changed = True
+                    return changed
+                if now - self._last_step >= self._pace(len(ordered)) * drag:
                     self._last_step = now
+                    if random.random() < 0.06:
+                        self._pause_until = now + random.uniform(0.8, 2.4)
+                        self.frame = "idle"
+                        return True
+                    if random.random() < 0.04:
+                        self.facing *= -1          # changed its mind
                     self.x += self.facing
                     if self.x <= 1 or self.x >= limit:
                         self.facing *= -1
