@@ -28,7 +28,11 @@ BIN_DIR_CANDIDATES = (Path.home() / ".local" / "bin", Path("/usr/local/bin"))
 ITERM_SUPPORT = Path.home() / "Library" / "Application Support" / "iTerm2"
 AUTOLAUNCH_DIR = ITERM_SUPPORT / "Scripts" / "AutoLaunch"
 AUTOLAUNCH_SCRIPT = AUTOLAUNCH_DIR / "agentdash_daemon.py"
-DISABLED_DIR = AUTOLAUNCH_DIR / "disabled-by-agentdash"
+# Deliberately NOT inside AutoLaunch: iTerm2 treats every subdirectory there as
+# a "full environment" script package and pops up "Cannot Run Script - ... is
+# malformed" on each launch for anything that is not one.
+DISABLED_DIR = config.HOME / "disabled-iterm-scripts"
+LEGACY_DISABLED_DIR = AUTOLAUNCH_DIR / "disabled-by-agentdash"
 CLAUDE_DIR = Path.home() / ".claude"
 CLAUDE_SETTINGS = CLAUDE_DIR / "settings.json"
 CLAUDE_MEMORY = CLAUDE_DIR / "CLAUDE.md"
@@ -108,6 +112,29 @@ def iterm_python() -> Optional[Path]:
         if proc.returncode == 0:
             best = path
     return best
+
+
+def migrate_legacy_disabled() -> int:
+    """Rescue scripts parked in the old location inside AutoLaunch.
+
+    Version 1.0.0 stashed conflicting scripts in a subdirectory of AutoLaunch,
+    which iTerm2 then tried to load as a script package. Move them out.
+    """
+    if not LEGACY_DISABLED_DIR.exists():
+        return 0
+    DISABLED_DIR.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for path in sorted(LEGACY_DISABLED_DIR.iterdir()):
+        target = DISABLED_DIR / path.name
+        if target.exists():
+            target.unlink()
+        shutil.move(str(path), str(target))
+        moved += 1
+    try:
+        LEGACY_DISABLED_DIR.rmdir()
+    except OSError:
+        pass
+    return moved
 
 
 def conflicting_autolaunch() -> List[Path]:
@@ -391,6 +418,11 @@ def install(disable_conflicting: Optional[bool] = None) -> int:
     install_autolaunch()
     _say(OK, "iTerm2 daemon script", str(AUTOLAUNCH_SCRIPT))
 
+    rescued = migrate_legacy_disabled()
+    if rescued:
+        _say(OK, "legacy stash", "moved %d script(s) out of AutoLaunch into %s"
+             % (rescued, DISABLED_DIR))
+
     conflicts = conflicting_autolaunch()
     if conflicts:
         if disable_conflicting:
@@ -451,12 +483,14 @@ def uninstall(purge: bool = False) -> int:
     if AUTOLAUNCH_SCRIPT.exists():
         AUTOLAUNCH_SCRIPT.unlink()
         _say(OK, "iTerm2 daemon script", "removed")
+    migrate_legacy_disabled()
     if DISABLED_DIR.exists():
         restored = list(DISABLED_DIR.glob("*.py"))
+        AUTOLAUNCH_DIR.mkdir(parents=True, exist_ok=True)
         for path in restored:
             shutil.move(str(path), str(AUTOLAUNCH_DIR / path.name))
         if restored:
-            _say(OK, "conflicting scripts", "restored %d" % len(restored))
+            _say(OK, "conflicting scripts", "restored %d to AutoLaunch" % len(restored))
         try:
             DISABLED_DIR.rmdir()
         except OSError:
@@ -517,6 +551,10 @@ def doctor() -> int:
     if conflicts:
         rows.append((WARN, "conflicting scripts",
                      "%s also recolour windows" % ", ".join(p.name for p in conflicts)))
+    if LEGACY_DISABLED_DIR.exists():
+        rows.append((BAD, "legacy stash",
+                     "%s makes iTerm2 show 'Cannot Run Script' on launch - "
+                     "rerun `agentdash install` to move it out" % LEGACY_DISABLED_DIR))
 
     data = state.read()
     beat = data["meta"].get("daemon_heartbeat")
