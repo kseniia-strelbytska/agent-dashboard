@@ -190,10 +190,21 @@ def _invoke(prompt: str, ranker: Dict, model: str) -> Tuple[Optional[Dict], Dict
     except ValueError:
         return None, {"error": "unparseable CLI output", "reset": not fresh}
 
+    u = envelope.get("usage") or {}
+    def _n(key):
+        try:
+            return int(u.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
     meta = {
         "session_id": envelope.get("session_id") or session_id,
         "cost": float(envelope.get("total_cost_usd") or 0.0),
         "fresh": fresh,
+        # Everything the ranking model actually processed, cache reads included:
+        # the point of the number is to show what it is costing.
+        "tokens": (_n("input_tokens") + _n("output_tokens")
+                   + _n("cache_creation_input_tokens") + _n("cache_read_input_tokens")),
+        "output_tokens": _n("output_tokens"),
     }
     if envelope.get("is_error"):
         meta["error"] = str(envelope.get("result"))[:200]
@@ -386,12 +397,16 @@ def rank_once() -> bool:
         r["last_error"] = None
         r["last_rank_rev"] = rev_at_call
         r["cost_usd"] = round(float(r.get("cost_usd") or 0.0) + meta.get("cost", 0.0), 4)
+        r["tokens"] = int(r.get("tokens") or 0) + int(meta.get("tokens") or 0)
+        r["output_tokens"] = int(r.get("output_tokens") or 0) + int(meta.get("output_tokens") or 0)
         r["ranks"] = int(r.get("ranks") or 0) + 1
         r["budget_note"] = None
         return True
 
     state.update(mutate)
-    _log("ranked %d sessions (turn %d, +$%.4f)" % (len(sessions), ranker.get("turns", 0) + 1, meta.get("cost", 0.0)))
+    _log("ranked %d sessions (turn %d, +$%.4f, +%d tok)"
+         % (len(sessions), ranker.get("turns", 0) + 1, meta.get("cost", 0.0),
+            meta.get("tokens", 0)))
     return True
 
 

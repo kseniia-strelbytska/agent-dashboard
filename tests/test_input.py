@@ -62,26 +62,32 @@ def feed(dash, data):
 
 
 def main():
-    print("mouse")
+    print("mouse never opens anything")
     dash = Fake()
     dash.line_owner = {4: "sess-a", 5: "sess-a", 9: "sess-b"}
-    check(feed(dash, "\x1b[<35;10;4M") and dash.hover_id == "sess-a",
-          "motion over a session's line sets hover")
-    check(not feed(dash, "\x1b[<35;12;5M") and dash.hover_id == "sess-a",
-          "moving within the same session is not a redraw")
-    check(feed(dash, "\x1b[<35;12;9M") and dash.hover_id == "sess-b",
-          "moving to another session moves hover")
-    check(feed(dash, "\x1b[<35;12;2M") and dash.hover_id is None,
-          "moving off every row clears hover")
-    dash.hover_id = "sess-a"
+    jumped = []
+    dash._focus_session = lambda sid: jumped.append(sid)
+    check(not feed(dash, "\x1b[<35;10;4M"), "motion over a row does nothing")
+    check(dash.open_id is None, "and opens no private context")
+    check(not feed(dash, "\x1b[<35;12;9M"), "moving between rows does nothing")
+    check(dash.open_id is None and jumped == [], "still nothing opened, nothing jumped")
     check(not feed(dash, "\x1b[<64;12;4M"), "the scroll wheel is ignored")
-    check(not feed(dash, "\x1b[<65;12;9M"), "wheel-down is ignored too")
-    check(dash.hover_id == "sess-a", "scrolling does not disturb hover")
+    check(feed(dash, "\x1b[<0;12;9M") and jumped == ["sess-b"],
+          "a deliberate click still jumps to that session's window")
+    check(dash.open_id is None, "and a click does not open private context either")
+    check(Fake().mouse_enabled is False,
+          "mouse reporting is off by default, so text selection works")
 
-    focused = []
-    dash._focus_session = lambda sid: focused.append(sid)
-    check(feed(dash, "\x1b[<0;12;9M") and focused == ["sess-b"],
-          "a left click jumps to that session's window")
+    print("numbers open and close context")
+    dash = Fake()
+    dash.index_map = {1: "sess-a", 2: "sess-b"}
+    check(feed(dash, "1") and dash.open_id == "sess-a", "1 opens the first session")
+    check(feed(dash, "1") and dash.open_id is None, "1 again closes it")
+    feed(dash, "1")
+    check(feed(dash, "2") and dash.open_id == "sess-b", "2 switches to the second")
+    check(feed(dash, "7") and dash.open_id == "sess-b",
+          "a number with no session leaves the open one alone")
+    check("no session 7" in dash.status_note, "and says so")
 
     print("focus")
     dash = Fake()
@@ -109,14 +115,15 @@ def main():
     check(dash.show_all is False, "a folds it back")
     feed(dash, "?")
     check(dash.help_open is True, "? opens help")
-    dash.hover_id = "x"
-    feed(dash, "m")
-    check(dash.mouse_enabled is False and dash.hover_id is None,
-          "m disables mouse reporting and drops hover so text can be selected")
-    check(tui.MOUSE_OFF in dash.written[-1], "m emits the disable sequence")
     feed(dash, "m")
     check(dash.mouse_enabled is True and tui.MOUSE_ON in dash.written[-1],
-          "m re-enables mouse reporting")
+          "m turns mouse reporting on for click-to-jump")
+    feed(dash, "m")
+    check(dash.mouse_enabled is False and tui.MOUSE_OFF in dash.written[-1],
+          "and off again")
+    dash.open_id = "x"
+    feed(dash, "m")
+    check(dash.open_id == "x", "toggling the mouse leaves an open row alone")
 
     print("quit")
     dash = Fake()
