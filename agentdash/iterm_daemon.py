@@ -21,7 +21,7 @@ import traceback
 
 import iterm2
 
-from . import config, state
+from . import bridge, config, state
 
 NEUTRAL = "#0B0B0D"          # the dashboard window stays out of the palette
 # The session monitors wake us the instant a window opens or closes, so the poll
@@ -76,6 +76,7 @@ class Daemon:
         self._applied = {}       # iterm session uuid -> colour hex last painted
         self._sess_to_window = {}
         self._colours = {}       # window_id -> colour
+        self._ttys = {}          # tty path -> window_id
         self._wake = asyncio.Event()
 
     # -- iTerm2 side ----------------------------------------------------------
@@ -93,6 +94,7 @@ class Daemon:
         live = {}
         sess_to_window = {}
         objects = {}
+        ttys = {}
         for window in self.app.terminal_windows:
             wid = window.window_id
             uuids = []
@@ -101,7 +103,16 @@ class Daemon:
                     uuids.append(session.session_id)
                     sess_to_window[session.session_id] = wid
                     objects[session.session_id] = session
+                    # The tty is how a containerised session is traced back to
+                    # the host window that is driving it.
+                    try:
+                        tty = await session.async_get_variable("tty")
+                    except Exception:
+                        tty = None
+                    if tty:
+                        ttys[tty] = wid
             live[wid] = uuids
+        self._ttys = ttys
         self._sess_to_window = sess_to_window
 
         dash = self._dashboard_sessions()
@@ -255,10 +266,13 @@ class Daemon:
                 data["meta"]["daemon_pid"] = pid
                 data["meta"]["daemon_heartbeat"] = time.time()
                 data["meta"]["daemon_version"] = config.VERSION
+                if self._ttys:
+                    data["meta"]["ttys"] = self._ttys
                 return True
             try:
                 state.update(mutate)
                 state.reap()
+                bridge.ingest()
             except Exception:
                 _log("heartbeat error:\n%s" % traceback.format_exc())
             await asyncio.sleep(HEARTBEAT_INTERVAL)

@@ -68,6 +68,7 @@ both load.
 | `~/.claude/settings.json` | five hooks, tagged so uninstall finds them |
 | `~/.claude/CLAUDE.md` | a delimited block telling sessions how to report |
 | `~/.zshrc`, `~/.bashrc` | a delimited block that registers each new window |
+| a bridged container | `~/.agentdash/` inside it, plus five hooks in its `settings.json` |
 
 Everything outside `~/.agent-dashboard` is either a delimited managed block or a
 tagged entry, and `agentdash uninstall` removes all of it. `settings.json` is
@@ -133,6 +134,36 @@ within five seconds are batched into a single rerank. It runs with
 it passes hard age and turn limits, and the dashboard header warns you as soon
 as its context passes the softer marks — or when its ordering has fallen behind
 the state on screen. Its running cost is shown in the header.
+
+## Sessions inside containers
+
+A Claude session running in a container reads that container's config, so it has
+none of these hooks, and it cannot see the host binary or state directory. It is
+invisible to the dashboard rather than merely silent, and the retrofit above
+cannot help it because there are no hooks to run.
+
+```sh
+agentdash bridge install <container>   # writes into a *running* container
+agentdash bridge list
+agentdash bridge remove <container>
+```
+
+This writes a POSIX-shell reporter and the five hooks into the container - no
+Python needed in there - and points them at a spool directory on a bind mount
+the container already has. Records are appended as JSON files and the host
+daemon drains them into the dashboard every few seconds. Nothing is restarted
+and no network is involved.
+
+The row is coloured correctly too: the host process running
+`docker exec -w <dir> ... <container>` is matched to its tty, and the tty to the
+iTerm2 window, so a containerised session appears in the colour of the window
+you are actually watching it in.
+
+Two honest limits. A session already running in the container picks the hooks up
+only if Claude Code re-reads its settings between turns; otherwise it appears
+when that session next restarts. And the container's tool sandbox may confine
+writes to the project directory, so the reporter falls back from the shared root
+to `<project>/.agentdash-spool`, which the host scans as well.
 
 ## Reporting from a session
 
@@ -222,6 +253,7 @@ python3 tests/test_input.py      # SGR mouse decoding, focus reporting, keys
 python3 tests/test_limits.py     # rank budget, worker herd control
 python3 tests/test_pressure.py   # standing down under memory pressure
 python3 tests/test_retrofit.py   # handing instructions to sessions that lack them
+python3 tests/test_bridge.py     # containerised sessions, offline (no docker needed)
 python3 tests/test_flow.py       # windows, colours, reports, hooks, reaping
 python3 tests/render_demo.py 100 # render a synthetic roster; --hover --all --stale --empty
 ```
