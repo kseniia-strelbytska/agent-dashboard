@@ -122,6 +122,8 @@ def submit(session_id: str, status: str, tag: Optional[str], summary: Optional[s
         rec["last_seen"] = now
         rec["action_needed"] = action
         rec["reports"] = rec.get("reports", 0) + (1 if self_reported else 0)
+        if self_reported:
+            rec["prompt_at_last_report"] = rec.get("prompts") or 0
         if action:
             # The clock starts at the first wait and keeps running across
             # repeated reports, so "blocked 2h" means 2h since it first stalled.

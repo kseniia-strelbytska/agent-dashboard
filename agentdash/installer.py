@@ -329,6 +329,10 @@ def install_instructions(launcher: Path) -> str:
     if not src.exists():
         raise RuntimeError("missing %s in the clone" % src)
     body = src.read_text().replace("{{AGENTDASH}}", str(launcher))
+    # Also kept where the hooks can read it, so a session that never loaded
+    # CLAUDE.md can still be handed the instructions mid-flight.
+    config.ensure_dirs()
+    (config.HOME / "instructions.md").write_text(body)
     return _upsert_block(CLAUDE_MEMORY, body, MD_BEGIN, MD_END)
 
 
