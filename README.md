@@ -107,6 +107,13 @@ get a herd of short-lived processes. The window daemon backs its poll off while
 nothing changes, and the dashboard re-parses state only when the file has
 actually moved. Measured idle cost of the daemon: about 25 MB and 0.1% CPU.
 
+**Standing down.** The tool reads the kernel's own memory-pressure level
+(`kern.memorystatus_vm_pressure_level`) and free-memory percentage before every
+model call, via `sysctlbyname` rather than a subprocess. If the machine is under
+pressure, or free memory is below the configured floor, ranking pauses, the
+order falls back to the heuristic, and the dashboard header says so. It fails
+open: if the kernel cannot be read, work is never withheld on a guess.
+
 **Ranking.** One long-lived Claude session is resumed on every update, so it
 accumulates judgement over the day instead of seeing each snapshot cold. Updates
 within five seconds are batched into a single rerank. It runs with
@@ -143,7 +150,9 @@ default.
   "ranker_model": "sonnet",      // or "haiku" for a cheaper, blunter ranker
   "ranking_enabled": true,       // false: use the built-in heuristic only
   "rank_min_interval_seconds": 20,  // floor between two model calls
-  "rank_max_per_hour": 60           // rolling ceiling; heuristic order beyond it
+  "rank_max_per_hour": 60,          // rolling ceiling; heuristic order beyond it
+  "defer_under_memory_pressure": true,
+  "min_available_percent": 12       // pause ranking below this much free memory
 }
 ```
 
@@ -195,6 +204,7 @@ Common ones:
 python3 tests/test_layout.py     # width safety at 40-200 cols, hover stability
 python3 tests/test_input.py      # SGR mouse decoding, focus reporting, keys
 python3 tests/test_limits.py     # rank budget, worker herd control
+python3 tests/test_pressure.py   # standing down under memory pressure
 python3 tests/test_flow.py       # windows, colours, reports, hooks, reaping
 python3 tests/render_demo.py 100 # render a synthetic roster; --hover --all --stale --empty
 ```
